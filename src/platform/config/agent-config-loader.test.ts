@@ -23,15 +23,16 @@ describe('loadAgentConfig', () => {
     await writeFile(join(agentHome, 'config.json'), JSON.stringify(value), 'utf8');
   }
 
-  it('projects startup-only sandbox paths globally without putting them in Agent defaults', async () => {
-    await writeConfig({ agents: { sandbox: { enabled: true, readwritePaths: [agentHome] } } });
+  it('projects startup-only sandbox policy globally without putting it in Agent defaults', async () => {
+    await writeConfig({ agents: { sandbox: { enabled: true, network: 'outbound', write: [agentHome] } } });
     const snapshot = await loadAgentConfig({ agentHome });
-    expect(snapshot.application.agents.sandbox).toMatchObject({ enabled: true, readwritePaths: [agentHome] });
+    expect(snapshot.application.agents.sandbox).toMatchObject({ enabled: true, network: 'outbound', write: [agentHome] });
     expect(snapshot.application.agents.defaults).not.toHaveProperty('sandbox');
   });
 
   it.each([
-    { agents: { sandbox: { readonlyPaths: ['relative'] } }, fieldPath: 'agents.sandbox.readonlyPaths[0]' },
+    { agents: { sandbox: { read: ['relative'] } }, fieldPath: 'agents.sandbox.read[0]' },
+    { agents: { sandbox: { network: 'all' } }, fieldPath: 'agents.sandbox.network' },
     { agents: { defaults: { sandbox: { enabled: true } } }, fieldPath: 'agents.defaults.sandbox' },
     { agents: { list: [{ id: 'worker', sandbox: { enabled: true } }] }, fieldPath: 'agents.list[0].sandbox' },
   ])('rejects invalid or per-Agent sandbox at $fieldPath', async ({ agents, fieldPath }) => {

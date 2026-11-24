@@ -49,9 +49,13 @@ Global Agent execution policy precedence is `module default -> agents top-level 
 - The top-level `runner` namespace and `inTurnMessageMode` are removed with no alias or compatibility path.
 - Tool policy includes only allow and deny; there is no `tools.fs` subtree.
 - Builtins Environment owns the separate global startup-only `agents.sandbox`
-  leaf. Omission is disabled; explicit read/write/denied absolute local paths and
-  enabled state are validated with exact composed field paths. Per-Agent placement
-  is rejected. Section saves preserve it without live application.
+  leaf. Omission is disabled; `read`/`write`/`deny` absolute local path lists and
+  enabled state and the `none`/`outbound`/`outbound-and-loopback` network mode
+  (default `none`) are validated with exact composed field paths. Per-Agent placement
+  is rejected. The independent `agents:sandbox` Settings section saves all five
+  fields through the same owner validator and exposes saved/startup values,
+  Host platform and restart status. It does not apply policies live or probe
+  native capabilities while saving; other section saves preserve it.
   [Sandbox Execution](sandbox-execution.md) owns OS enforcement and lifecycle.
 - Agent Context owns the contract/defaults for per-file and total loading budgets; `AgentDefaults.context` composes that leaf.
 - Memory owns enablement, embedding, chunking, and search contracts/defaults.
@@ -140,7 +144,7 @@ Agent Home is the relative path anchor, not a confinement boundary. Approval is 
 
 Platform Configuration owns `saveAgentConfigSection` and
 `restoreAgentConfigSection`. A save reads the current document, edits only the
-identified LLM, Extension, Memory, execution-policy, Skills, named Agent or shared Tool-default section, validates without environment resolution,
+identified LLM, Extension, Memory, Sandbox, execution-policy, Skills, named Agent or shared Tool-default section, validates without environment resolution,
 then exclusively creates a same-directory temporary file and renames it over
 `config.json`. It returns the committed raw document and target preimage without
 rereading after publication. This does not provide external-write CAS protection.

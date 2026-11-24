@@ -16,6 +16,7 @@ import type { ProviderProjectionEntry } from '../../core/model-resolution/index.
 import type { RuntimeUnitInstance } from '../composition/runtime-unit.js';
 import { CompositionCoordinator } from '../composition/composition-coordinator.js';
 import { finalizeRegistrySnapshot, resolveStagedRegistryCandidate, stageRegistryUnit } from '../composition/registry-builder.js';
+import { resolveSandboxConfig } from '../../builtins/tools/environment/index.js';
 
 const model = { modelId: 'one', protocol: 'openai-responses' };
 const settings = { builtin: { baseURL: 'https://updated.example/v1', models: [model] } };
@@ -214,6 +215,53 @@ describe('SettingsManager', () => {
     expect(record(recovered.output)['skillCatalog']).toEqual({ entries: [], diagnostics: [] });
     expect(record(recovered.output)).not.toHaveProperty('skillCatalogError');
     expect(record(section(recovered, 'agents:skills')['settings'])['skills']).toEqual(['missing']);
+  });
+
+  it('saves Sandbox independently without applying it, checks revisions, and reverses the restart marker', async () => {
+    const f = fixture();
+    const captured = f.policies.capture();
+    const loaded = await f.load();
+    const initial = revision(loaded, 'agents:sandbox');
+    const saved = await f.update(initial, {
+      enabled: true, network: 'outbound-and-loopback', write: [agentHome],
+    }, 'agents:sandbox');
+    expect(saved).toMatchObject({ ok: true, output: { section: {
+      settings: { enabled: true, network: 'outbound-and-loopback', write: [agentHome] },
+      appliedSettings: resolveSandboxConfig(), restartRequired: true, applicationStatus: 'restart_required',
+    } } });
+    expect((await read()).agents.sandbox.network).toBe('outbound-and-loopback');
+    expect((await read()).llm).toEqual(document.llm);
+    expect((await read()).extensions).toEqual(document.extensions);
+    expect(revision(await f.load())).toBe(revision(loaded));
+    expect(await f.update(initial, {}, 'agents:sandbox')).toMatchObject({
+      ok: false, error: { code: 'revision_conflict' },
+    });
+    expect(await f.update(revision(saved, 'agents:sandbox'), {}, 'agents:sandbox')).toMatchObject({
+      ok: true, output: { section: { restartRequired: false, applicationStatus: 'current' } },
+    });
+    expect(f.policies.capture()).toBe(captured);
+    expect(f.apply).not.toHaveBeenCalled();
+    expect(f.restore).not.toHaveBeenCalled();
+  });
+
+  it('retains Sandbox state and revision after credentials, invalid configuration or persistence failure', async () => {
+    const f = fixture({ startupSandboxConfig: resolveSandboxConfig({ enabled: true, network: 'outbound' }) });
+    const loaded = await f.load();
+    expect(section(loaded, 'agents:sandbox')).toMatchObject({
+      appliedSettings: { enabled: true, network: 'outbound' }, restartRequired: true,
+    });
+    const initial = revision(loaded, 'agents:sandbox');
+    expect(await f.update(initial, {}, 'agents:sandbox', {})).toMatchObject({
+      ok: false, error: { fieldPath: '/credentials' },
+    });
+    expect(f.save).not.toHaveBeenCalled();
+    for (const settings of [{ network: 'all' }, { read: ['relative'] }]) {
+      expect(await f.update(initial, settings, 'agents:sandbox')).toMatchObject({ ok: false });
+    }
+    f.save.mockRejectedValueOnce(new Error('Sandbox save failed'));
+    expect(await f.update(initial, {}, 'agents:sandbox')).toMatchObject({ ok: false });
+    expect(section(await f.load(), 'agents:sandbox')).toEqual(section(loaded, 'agents:sandbox'));
+    expect(f.apply).not.toHaveBeenCalled();
   });
 
   it('saves Memory independently, keeps runtime policies unchanged, and reverses the restart marker', async () => {

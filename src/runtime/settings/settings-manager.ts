@@ -10,6 +10,7 @@ import type { AgentConfigDocument } from '../../platform/config/types.js';
 import type { ExtensionAcquisitionResult, ExtensionDescriptorV1 } from '../../extension/acquisition/types.js';
 import { BUILTIN_PROVIDER_ID, createBuiltinLlmProviderUnit, type LLMConfig } from '../../builtins/providers/builtin/index.js';
 import { Logger } from '../../platform/logger/index.js';
+import { resolveSandboxConfig, type SandboxConfig } from '../../builtins/tools/environment/index.js';
 import type { RuntimeReloadResult } from '../composition/runtime-composition.js';
 import type { RuntimeDeadlineBudget, RuntimeDeadlineDriver } from '../runtime-deadline.js';
 import type { RuntimeSnapshotAccess } from '../composition/composition-coordinator.js';
@@ -18,7 +19,7 @@ import { SHARED_AGENT_TOOLS_SECTION, DEFAULT_AGENT_SKILLS_SECTION, type AgentPol
 import { discoverSkills, SkillLibraryError } from '../../core/skills/index.js';
 import { ModelTestRunner } from './model-test.js';
 import {
-  buildExecutionSectionView, buildMemorySectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
+  buildSandboxSectionView, buildExecutionSectionView, buildMemorySectionView, buildLlmSectionView, buildExtensionSectionView, type SettingsApplicationState,
 } from './section-views.js';
 import {
   SettingsClosingError,
@@ -31,6 +32,7 @@ interface SettingsManagerOptions {
   readonly agentHome: string;
   readonly document: AgentConfigDocument;
   readonly startupMemoryEnabled: boolean;
+  readonly startupSandboxConfig?: SandboxConfig;
   readonly agentPolicies?: AgentPolicyState;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly extensionMetadata?: Readonly<Pick<ExtensionAcquisitionResult, 'discovery' | 'diagnostics'>>;
@@ -63,10 +65,12 @@ export class SettingsManager implements SettingsCapability {
   private applicationState: SettingsApplicationState = 'current';
   private readonly environment: Readonly<Record<string, string | undefined>>;
   private readonly modelTests: ModelTestRunner;
+  private readonly startupSandboxConfig: SandboxConfig;
 
   constructor(private readonly options: SettingsManagerOptions) {
     this.document = structuredClone(options.document);
     this.baseline = structuredClone(options.document);
+    this.startupSandboxConfig = resolveSandboxConfig(options.startupSandboxConfig ?? options.document.agents?.sandbox);
     this.environment = Object.freeze({ ...options.environment });
     this.modelTests = new ModelTestRunner({
       getSavedState: () => ({
@@ -79,6 +83,7 @@ export class SettingsManager implements SettingsCapability {
     });
     this.revisions.set('llm', randomUUID());
     this.revisions.set('agents:memory', randomUUID());
+    this.revisions.set('agents:sandbox', randomUUID());
     for (const id of options.agentPolicies?.sectionIds ?? []) this.revisions.set(id, randomUUID());
     for (const candidate of options.extensionMetadata?.discovery.candidates ?? []) {
       this.descriptors.set(`extension:${candidate.descriptor.id}`, candidate.descriptor);
@@ -216,8 +221,11 @@ export class SettingsManager implements SettingsCapability {
     const agentSection = id === SHARED_AGENT_TOOLS_SECTION || id === DEFAULT_AGENT_SKILLS_SECTION || id.startsWith('agent:');
     const executionSection = id === 'agents:execution';
     const memorySection = id === 'agents:memory';
-    if ((agentSection || executionSection || memorySection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
-    const edit: ConfigSectionEdit = memorySection
+    const sandboxSection = id === 'agents:sandbox';
+    if ((agentSection || executionSection || memorySection || sandboxSection) && input['credentials'] !== undefined) throw new ConfigEditError('/credentials');
+    const edit: ConfigSectionEdit = sandboxSection
+      ? { kind: 'sandbox', settings: input['settings'] }
+      : memorySection
       ? { kind: 'memory', settings: input['settings'] }
       : executionSection
       ? { kind: 'agent-execution', settings: input['settings'] }
@@ -365,6 +373,12 @@ export class SettingsManager implements SettingsCapability {
   }
 
   private section(id: string, catalog?: ModelCatalogSnapshot) {
+    if (id === 'agents:sandbox') {
+      return buildSandboxSectionView({
+        revision: this.revisions.get(id), document: this.document,
+        startupConfig: this.startupSandboxConfig,
+      });
+    }
     if (id === 'agents:memory') {
       return buildMemorySectionView({
         revision: this.revisions.get(id), document: this.document,

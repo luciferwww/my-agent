@@ -130,6 +130,15 @@ function executionSection(settings: Record<string, unknown> = {}) {
   };
 }
 
+function sandboxSection() {
+  const settings = { enabled: false, network: 'none', read: [], write: [], deny: [] };
+  return {
+    id: 'agents:sandbox', kind: 'sandbox', name: 'Execution Sandbox', revision: 'sandbox-revision',
+    settings, appliedSettings: settings, platform: 'linux', restartRequired: false,
+    applicationStatus: 'current', form: { credentials: {} },
+  };
+}
+
 async function category(name: string) {
   const label = [...host.querySelectorAll('.settings-nav-name')].find(item => item.textContent === name);
   if (!label?.parentElement) throw new Error(`Missing Settings category: ${name}`);
@@ -188,6 +197,10 @@ async function mount(
           extra['resolvedSettings'] = { ...object(extra['defaults']), ...object(extra['settings']) };
           extra['restartRequired'] = false;
           extra['applicationStatus'] = 'current';
+        }
+        if (sectionId === 'agents:sandbox') {
+          extra['restartRequired'] = JSON.stringify(extra['settings']) !== JSON.stringify(extra['appliedSettings']);
+          extra['applicationStatus'] = extra['restartRequired'] ? 'restart_required' : 'current';
         }
         if (sectionId === 'agents:defaults') {
           const tools = object(object(input)['settings'])['tools'];
@@ -267,6 +280,44 @@ function deferredResult() {
 }
 
 describe('SettingsPanel', () => {
+  it('edits Sandbox under global settings, warns without blocking, and preserves startup state until restart', async () => {
+    const f = await mount(initialSettings(), [sandboxSection()]);
+    await category('Agents');
+    await click('Global settings');
+    await click('Configure Execution Sandbox');
+    expect(host.textContent).toContain('Sandbox disabled (host-direct Exec)');
+    await checkbox('Enable Sandbox');
+    await click('Network access');
+    await click('Outbound and host loopback');
+    expect(host.textContent).toContain('may trust localhost');
+    expect(host.textContent).toContain('Linux MXC 1.1.0 does not support');
+    await fill('Read paths', '/reference\n/other reference');
+    await fill('Write paths', '/work');
+    await fill('Deny paths', '/work/private');
+    await click('Back to Global settings');
+    expect(host.textContent).toContain('Unsaved');
+    await click('Configure Execution Sandbox');
+    await click('Save Execution Sandbox');
+    expect(latestUpdate(f.execute)).toEqual({
+      sectionId: 'agents:sandbox', expectedRevision: 'sandbox-revision',
+      settings: {
+        enabled: true, network: 'outbound-and-loopback', read: ['/reference', '/other reference'],
+        write: ['/work'], deny: ['/work/private'],
+      },
+    });
+    expect(host.textContent).toContain('Sandbox disabled (host-direct Exec)');
+    expect(host.textContent).toContain('Saved, not applied: restart required.');
+    await checkbox('Enable Sandbox');
+    await click('Network access');
+    await click('No external network');
+    await fill('Read paths', '');
+    await fill('Write paths', '');
+    await fill('Deny paths', '');
+    await click('Save Execution Sandbox');
+    expect(host.textContent).not.toContain('Restart required');
+    expect(host.textContent).not.toContain('Unsaved');
+  });
+
   it('edits Memory through Global settings with the shared checkbox, restart badge, and enabled-only save', async () => {
     const memory = {
       id: 'agents:memory', kind: 'memory', name: 'Memory', revision: 'memory-revision',

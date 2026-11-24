@@ -17,8 +17,24 @@ import type {
   ExtensionDescriptorV1,
 } from '../../extension/acquisition/types.js';
 import { isObject } from './helpers.js';
+import { resolveSandboxConfig, type SandboxConfig } from '../../builtins/tools/environment/index.js';
 
 export type SettingsApplicationState = 'current' | 'not_applied' | 'unknown';
+
+export function buildSandboxSectionView(input: {
+  readonly revision: string | undefined;
+  readonly document: AgentConfigDocument;
+  readonly startupConfig: SandboxConfig;
+}) {
+  const settings = resolveSandboxConfig(input.document.agents?.sandbox);
+  const restartRequired = !isDeepStrictEqual(settings, input.startupConfig);
+  return {
+    id: 'agents:sandbox', kind: 'sandbox', name: 'Execution Sandbox', revision: input.revision,
+    settings, appliedSettings: input.startupConfig, platform: process.platform, restartRequired,
+    applicationStatus: restartRequired ? 'restart_required' : 'current',
+    form: { credentials: {} },
+  };
+}
 
 export function buildMemorySectionView(input: {
   readonly revision: string | undefined;

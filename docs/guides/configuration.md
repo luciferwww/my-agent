@@ -67,6 +67,17 @@ running, connected Channel; the automatically created empty configuration is val
   **Save Memory** changes only that flag and requires a service restart. It does
   not download models, index files or change running Tools. Saving the startup
   value again clears the restart marker. Advanced Memory options remain file-only.
+- **Agents -> Global settings -> Execution Sandbox** edits the global enabled
+  flag, three-state network mode and read-only/read-write/denied path lists.
+  Enter absolute Host paths, one per line. Existing paths containing line breaks
+  are preserved when unchanged; edit those
+  unusual path lists in the configuration file rather than the line-based form.
+  Saving changes only `agents.sandbox`; it does not change running commands or
+  restart the service automatically.
+  The page shows current startup enablement/network policy separately from saved
+  values. Differences require restart; saving startup-equivalent values clears
+  the marker. Host-loopback risk and unsupported-platform notices do not pretend
+  that saving a valid configuration proves native support.
 - **LLM** starts with a default-model selector and Provider list, not all Provider
   forms expanded together. Built-in is always an entry, even before configuration;
   its model count describes the draft. Other entries and model counts come from
@@ -440,14 +451,25 @@ With Node 24.21+, opt in through the global startup-only field below.
 Windows requires MXC BaseContainer; Linux requires operator-installed bubblewrap
 and supported unprivileged namespaces. Tool approvals remain independent:
 
+| Configuration key | Access |
+| --- | --- |
+| `read` | Read-only |
+| `write` | Read and write, including creating, overwriting and deleting; not write-only |
+| `deny` | Denied content access, subject to native overlap/alias rules |
+
+Migration: rename `readonlyPaths` to `read`, `readwritePaths` to `write`, and
+`deniedPaths` to `deny`, preserving the arrays. Old configuration keys now fail
+validation; they are not silently ignored. MXC SDK field names are unchanged.
+
 ```json
 {
   "agents": {
     "sandbox": {
       "enabled": true,
-      "readonlyPaths": ["C:\\tools\\shared-runtime"],
-      "readwritePaths": ["C:\\work\\project"],
-      "deniedPaths": ["C:\\work\\project\\private-data"]
+      "network": "none",
+      "read": ["C:\\tools\\shared-runtime"],
+      "write": ["C:\\work\\project"],
+      "deny": ["C:\\work\\project\\private-data"]
     }
   }
 }
@@ -460,9 +482,10 @@ On Linux use paths from that Linux filesystem, for example:
   "agents": {
     "sandbox": {
       "enabled": true,
-      "readonlyPaths": ["/home/user/shared-reference"],
-      "readwritePaths": ["/home/user/project"],
-      "deniedPaths": ["/home/user/project/private-data"]
+      "network": "none",
+      "read": ["/home/user/shared-reference"],
+      "write": ["/home/user/project"],
+      "deny": ["/home/user/project/private-data"]
     }
   }
 }
@@ -472,11 +495,17 @@ The Agent does not install bubblewrap or change OS permissions. The tested
 offline backend used Ubuntu 22.04/WSL2 and bubblewrap 0.6.1; basic requests require
 0.5+ according to the SDK. Unsupported policies, including some missing deny
 targets requiring newer bubblewrap/OverlayFS support, fail rather than degrade.
-Network-enabled helpers and proxy support are not part of this profile.
+Linux `outbound` additionally requires operator-provisioned `slirp4netns`,
+iproute2, util-linux (`unshare`/`nsenter`), iptables/ip6tables and their restore
+binaries, `/dev/net/tun` and the required kernel support. MXC uses a private
+network namespace, not the host network namespace. Missing networking capability
+fails startup with a diagnostic; launch revalidates it. Proxy/domain filtering
+is not included.
 
 Omission is disabled. Paths must be absolute local paths, not globs or UNC/device
-policy roots. Restart after editing; there is no live Settings toggle. Other
-Settings saves preserve this section. Enabling on an unsupported host/runtime
+policy roots. Edit the file or use **Agents -> Global settings -> Execution
+Sandbox**, then restart; changes are not applied live. Other Settings saves
+preserve this section. Enabling on an unsupported host/runtime
 fails startup, and an unsupported command policy fails execution without fallback.
 Linux path/environment matching is case-sensitive. Do not reuse Windows paths or
 Windows `node_modules` inside WSL. Grants/denies at `/` or `/tmp`, including aliases
@@ -491,15 +520,48 @@ The effective policy also grants necessary Node/OS/bootstrap reads, module
 package metadata and private temporary data. Directory metadata can be visible
 outside the writable directory; content permissions remain separate. Native
 overlap/alias rules apply, and implicit Windows access is not hidden.
+The adapter supplies these locations independently of the configured lists:
+
+| Location | Access | Source |
+| --- | --- | --- |
+| Windows `%SystemRoot%\System32` | `read` | Explicit adapter runtime grant |
+| Node executable directory | `read` | Explicit adapter runtime grant |
+| Trusted Bootstrap and its nearest package manifest | `read` | Explicit adapter runtime grant |
+| Installed Linux npm runtime library, when present | `read` | Explicit adapter runtime grant |
+| Unique private temporary root for this Exec | `write` | Dynamically created and owned by the adapter |
+| Paths in the configured `deny` list | `deny` | User configuration, under native policy rules |
+
+Windows can additionally supply system access through its ACL baseline; observed
+read access to a Windows directory is not proof of an explicit adapter grant or
+that every child is readable. Baseline exceptions are not authored `deny` rules.
 Externally required runtime paths cannot be silently made readable through an
 explicit denied parent; such a conflicting request is rejected.
 
-Shell commands and descendants, including Node/Python programs, have external
-networking and host-loopback access denied. `allow_all` does not disable the
+`agents.sandbox.network` has three values:
+
+| Value | Behavior |
+| --- | --- |
+| `none` (default) | Deny external network and host loopback; internal loopback remains separate |
+| `outbound` | Allow external egress while denying host loopback |
+| `outbound-and-loopback` | Also allow host loopback on supported Windows hosts |
+
+These settings apply to Exec and descendants, including Node/Python programs,
+only while Sandbox is enabled. They do not grant general inbound access.
+Outbound can include private-network destinations on Linux; Windows does not
+grant the private-network capability in this profile. It is not an HTTP-only or
+read-only network permission.
+
+Choosing `outbound-and-loopback` explicitly authorizes access to local services
+that may trust localhost; startup logs a risk warning rather than denying the
+choice. MXC's host-loopback permission is bidirectional. The current Linux
+bubblewrap backend cannot honor it and fails startup instead of widening access.
+Restart the Host after a change; existing commands do not change permissions
+live. `allow_all` does not disable the
 sandbox. Host file/web tools and arbitrary Extension code remain outside this OS
 boundary; their existing Tool policy is not replaced by the path lists.
 
-Commands get a private HOME/appdata/TEMP and offline npm cache. Sandbox-reserved
+Commands get a private HOME/appdata/TEMP and npm cache. npm is forced offline in
+`none`, and is not forced offline in the enabled network modes. Sandbox-reserved
 environment overrides fail explicitly; other values are passed only to the
 actual command, not the trusted bootstrap. Interactive command stdin is not
 supported. Background/yield processes retain the sandbox until completion or

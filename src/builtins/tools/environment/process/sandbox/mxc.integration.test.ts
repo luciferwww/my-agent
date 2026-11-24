@@ -38,7 +38,7 @@ describe.skipIf(!supported)('MXC execution boundary', () => {
     await writeFile(join(work, 'private', 'secret.txt'), 'SYNTHETIC_DENIED');
     await symlink(join(work, 'private'), join(work, 'private-alias'), process.platform === 'win32' ? 'junction' : 'dir');
     runner = await createMxcCommandRunner(resolveSandboxConfig({
-      enabled: true, readwritePaths: [work], deniedPaths: [join(work, 'private')],
+      enabled: true, write: [work], deny: [join(work, 'private')],
     }), home);
   });
 
@@ -156,7 +156,16 @@ describe.skipIf(!supported)('MXC execution boundary', () => {
     expect(() => process.kill(record.pid!, 0)).toThrow();
   }, 10_000);
 
-  it('denies direct networking from Node with a reachable outside-sandbox control', async () => {
+  it.each(['none', 'outbound', 'outbound-and-loopback'] as const)('enforces %s host-loopback access with a reachable outside-sandbox control', async network => {
+    if (process.platform === 'linux' && (network === 'outbound-and-loopback'
+      || (network === 'outbound' && getPlatformSupport().bubblewrapNetwork?.proxyEnforcement !== 'supported'))) {
+      await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true, network, write: [work] }), home))
+        .rejects.toThrow(network === 'outbound-and-loopback' ? 'does not support' : 'networking is unavailable');
+      return;
+    }
+    const networkRunner = await createMxcCommandRunner(resolveSandboxConfig({
+      enabled: true, network, write: [work],
+    }), home);
     let received = '';
     const server = createServer(socket => socket.on('data', bytes => { received += bytes.toString(); }));
     await new Promise<void>((yes, no) => {
@@ -176,14 +185,43 @@ describe.skipIf(!supported)('MXC execution boundary', () => {
         `const socket=require("node:net").createConnection({host:"127.0.0.1",port:${address.port}});`,
         'const timer=setTimeout(()=>{socket.destroy();console.log("DENIED_TIMEOUT")},1000);',
         'socket.once("error",()=>{clearTimeout(timer);console.log("DENIED_ERROR")});',
-        'socket.once("connect",()=>{clearTimeout(timer);socket.end("MUST_NOT_ARRIVE");console.log("UNEXPECTED_NETWORK")});',
+        'socket.once("connect",()=>{clearTimeout(timer);socket.end("SANDBOX_CONNECTED");console.log("CONNECTED")});',
       ].join('\n'));
-      const result = await createExecTool(home, runner).execute({ command: 'node network.cjs', cwd: work }, context());
+      const result = await createExecTool(home, networkRunner).execute({ command: 'node network.cjs', cwd: work }, context());
       expect(result.outcome).toBe('success');
-      expect(result.content).toContain('DENIED_');
-      expect(received).not.toContain('MUST_NOT_ARRIVE');
+      if (network === 'outbound-and-loopback') {
+        expect(result.content).toContain('CONNECTED');
+        await expect.poll(() => received).toContain('SANDBOX_CONNECTED');
+      } else {
+        expect(result.content).toContain('DENIED_');
+        expect(received).not.toContain('SANDBOX_CONNECTED');
+      }
     } finally {
       await new Promise<void>(yes => server.close(() => yes()));
     }
   }, 10_000);
+
+  it.skipIf(process.env.MY_AGENT_TEST_MXC_NETWORK !== '1')(
+    'allows public HTTPS and online npm without relaxing denied file access', async () => {
+      const networkRunner = await createMxcCommandRunner(resolveSandboxConfig({
+        enabled: true, network: 'outbound', write: [work], deny: [join(work, 'private')],
+      }), home);
+      await writeFile(join(work, 'outbound.cjs'), [
+        'const assert=require("node:assert/strict"),fs=require("node:fs");',
+        'assert.equal(process.env.npm_config_offline,"false");',
+        `assert.throws(()=>fs.readFileSync("private/secret.txt"),{code:"${process.platform === 'win32' ? 'EPERM' : 'ENOENT'}"});`,
+        'const request=require("node:https").get("https://example.com/",response=>{',
+        'response.resume();response.once("end",()=>{assert.equal(response.statusCode,200);console.log("OUTBOUND_HTTPS_OK")});',
+        '});',
+        'request.setTimeout(8000,()=>request.destroy(new Error("HTTPS timeout")));',
+        'request.once("error",error=>{console.error(error.message);process.exitCode=1});',
+      ].join('\n'));
+      const result = await createExecTool(home, networkRunner).execute({
+        command: 'node outbound.cjs && npm config get offline', cwd: work, timeout: 15,
+      }, context());
+      expect(result.outcome).toBe('success');
+      expect(result.content).toContain('OUTBOUND_HTTPS_OK');
+      expect(result.content).toMatch(/\bfalse\b/u);
+    }, 20_000,
+  );
 });

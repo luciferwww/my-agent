@@ -393,6 +393,7 @@ export async function buildRuntimeHandle(
         agentHome: options.agentHome,
         document: editingDocument,
         startupMemoryEnabled: bootstrap.resources.appConfig.agents.memory.enabled,
+        startupSandboxConfig: bootstrap.resources.appConfig.agents.sandbox,
         agentPolicies,
         environment: startupContext.environment,
         extensionMetadata: bootstrap.extensionMetadata,

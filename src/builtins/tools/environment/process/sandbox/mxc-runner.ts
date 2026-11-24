@@ -26,6 +26,7 @@ interface SandboxSdk {
     reason?: string;
     availableMethods: readonly string[];
     unavailableReasons?: { bubblewrap?: string };
+    bubblewrapNetwork?: { proxyEnforcement: 'supported' | 'unsupported'; warnings: readonly string[] };
   };
   probe(request?: ContainerRequest): {
     tier?: string;
@@ -47,13 +48,20 @@ function contains(root: string, path: string): boolean {
 
 function requirePaths(config: SandboxConfig, paths: readonly string[]): void {
   for (const path of paths) {
-    if (config.deniedPaths.some(denied => contains(denied, path))) {
+    if (config.deny.some(denied => contains(denied, path))) {
       throw new Error(`Required sandbox path is denied: ${path}`);
     }
   }
 }
 
-function environment(root: string) {
+function networkPolicy(mode: SandboxConfig['network']): NonNullable<ContainerRequest['network']> {
+  return {
+    egress: { default: mode === 'none' ? 'deny' : 'allow' },
+    ingress: { default: 'deny', hostLoopback: mode === 'outbound-and-loopback' ? 'allow' : 'deny' },
+  };
+}
+
+function environment(root: string, network: SandboxConfig['network']) {
   if (process.platform === 'linux') {
     return {
       PATH: `${dirname(process.execPath)}:/usr/local/bin:/usr/bin:/bin`,
@@ -61,7 +69,7 @@ function environment(root: string) {
       HOME: join(root, 'home'),
       TMPDIR: '/tmp',
       npm_config_cache: join(root, 'npm-cache'),
-      npm_config_offline: 'true',
+      npm_config_offline: network === 'none' ? 'true' : 'false',
       npm_config_update_notifier: 'false',
       [ROOT_VARIABLE]: root,
     };
@@ -77,6 +85,7 @@ function environment(root: string) {
     PATH: `${dirname(process.execPath)};${process.env.PATH ?? join(systemRoot, 'System32')}`,
     PATHEXT: process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD',
     HOME: root, USERPROFILE: root, LOCALAPPDATA: root, TEMP: root, TMP: root,
+    npm_config_offline: network === 'none' ? 'true' : 'false',
     [ROOT_VARIABLE]: root,
   };
 }
@@ -93,11 +102,17 @@ export async function createMxcCommandRunner(
   if (major !== 24 || minor === undefined || minor < 21) {
     throw new Error('Exec sandbox requires Node 24.21 or later within Node 24 LTS');
   }
+  if (process.platform === 'linux' && config.network === 'outbound-and-loopback') {
+    throw new Error('Linux MXC does not support agents.sandbox.network=outbound-and-loopback');
+  }
   const sdk = await loadSdk();
   if (process.platform === 'win32') {
-    const support = sdk.probe();
+    const support = sdk.probe({
+      command: process.execPath, network: networkPolicy(config.network),
+      containment: { type: 'processcontainer' },
+    });
     if (support.tier !== 'base-container' || !support.probes.baseContainerSupportsEnumeratePaths
-      || (config.deniedPaths.length > 0 && !support.probes.baseContainerSupportsDenyPaths)) {
+      || (config.deny.length > 0 && !support.probes.baseContainerSupportsDenyPaths)) {
       throw new Error(`Exec sandbox is unavailable: ${support.error ?? 'required native capabilities are missing'}`);
     }
   } else {
@@ -106,8 +121,13 @@ export async function createMxcCommandRunner(
       throw new Error(`Exec sandbox is unavailable: ${support.unavailableReasons?.bubblewrap
         ?? support.reason ?? 'Linux bubblewrap is unavailable'}`);
     }
+    // Direct egress and proxy egress require the same private-namespace network tools in MXC 1.1.0.
+    if (config.network === 'outbound' && support.bubblewrapNetwork?.proxyEnforcement !== 'supported') {
+      throw new Error(`Linux sandbox outbound networking is unavailable: ${
+        support.bubblewrapNetwork?.warnings.join('; ') || 'required private-network tools are unavailable'}`);
+    }
     const hostTemp = await realpath('/tmp');
-    for (const path of [...config.readonlyPaths, ...config.readwritePaths, ...config.deniedPaths]) {
+    for (const path of [...config.read, ...config.write, ...config.deny]) {
       let target: string;
       try {
         target = await realpath(path);
@@ -154,6 +174,9 @@ export async function createMxcCommandRunner(
   requirePaths(config, reads);
   const temporaryBase = await realpath(tmpdir());
   if (contains(await realpath(agentHome), temporaryBase)) throw new Error('Sandbox temporary base must be outside Agent Home');
+  if (config.network === 'outbound-and-loopback') {
+    log.warn('Sandbox host loopback access is enabled; commands and dependencies can reach local services that may trust localhost. Host-loopback access is bidirectional.');
+  }
   return options => runSandboxCommand(sdk, config, reads, temporaryBase, options);
 }
 
@@ -344,16 +367,16 @@ function runSandboxCommand(
             ? `"${process.execPath}" "${bootstrapPath}"`
             : `${linuxQuote(process.execPath)} ${linuxQuote(bootstrapPath)}`,
           workingDirectory: options.cwd,
-          environment: environment(root),
+          environment: environment(root, config.network),
           inheritDefaultEnvironment: false,
-          filesystem: { readonlyPaths: [...reads, ...config.readonlyPaths], readwritePaths: [root, ...config.readwritePaths], deniedPaths: [...config.deniedPaths] },
-          network: { egress: { default: 'deny' }, ingress: { default: 'deny', hostLoopback: 'deny' } },
+          filesystem: { readonlyPaths: [...reads, ...config.read], readwritePaths: [root, ...config.write], deniedPaths: [...config.deny] },
+          network: networkPolicy(config.network),
           ...(process.platform === 'win32' ? {
             ui: { disable: false, clipboard: 'none' as const, allowInputInjection: false },
             containment: { type: 'processcontainer' as const, config: {
               filesystem: { enumeratePaths: [...new Set([
                 process.execPath, bootstrapPath, options.cwd, root,
-                ...config.readonlyPaths, ...config.readwritePaths,
+                ...config.read, ...config.write,
               ].map(path => resolve(path).slice(0, 3)))] },
               ui: { isolation: 'container' as const, desktopSystemControl: false, systemSettings: 'none', ime: false },
             } },

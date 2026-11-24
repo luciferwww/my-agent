@@ -5,9 +5,38 @@ import {
   buildExecutionSectionView,
   buildExtensionSectionView,
   buildLlmSectionView,
+  buildSandboxSectionView,
   type SettingsApplicationState,
 } from './section-views.js';
 import { resolveAgentExecutionConfig } from '../../platform/config/index.js';
+import { resolveSandboxConfig } from '../../builtins/tools/environment/index.js';
+
+describe('sandbox section projection', () => {
+  it('shows saved owner defaults and the actual startup policy without leaking other settings', () => {
+    const startupConfig = resolveSandboxConfig({ enabled: true, network: 'outbound', write: [process.cwd()] });
+    const view = buildSandboxSectionView({
+      revision: 'sandbox-revision', startupConfig,
+      document: { llm: { builtin: { apiKey: 'sandbox-secret-sentinel' } } },
+    });
+    expect(view).toMatchObject({
+      id: 'agents:sandbox', kind: 'sandbox', settings: resolveSandboxConfig(),
+      appliedSettings: startupConfig, restartRequired: true, applicationStatus: 'restart_required',
+    });
+    expect(JSON.stringify(view)).not.toContain('sandbox-secret-sentinel');
+    expect(buildSandboxSectionView({ revision: 'same', startupConfig, document: { agents: { sandbox: startupConfig } } }))
+      .toMatchObject({ restartRequired: false, applicationStatus: 'current' });
+  });
+
+  it('marks path-only changes and clears the marker for equivalent explicit defaults', () => {
+    const startupConfig = resolveSandboxConfig();
+    expect(buildSandboxSectionView({
+      revision: 'paths', startupConfig, document: { agents: { sandbox: { read: [process.cwd()] } } },
+    }).restartRequired).toBe(true);
+    expect(buildSandboxSectionView({
+      revision: 'defaults', startupConfig, document: { agents: { sandbox: startupConfig } },
+    }).restartRequired).toBe(false);
+  });
+});
 
 describe('execution section projection', () => {
   it('reuses owner defaults without materializing saved settings or leaking other configuration', () => {

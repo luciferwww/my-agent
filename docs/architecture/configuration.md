@@ -69,7 +69,7 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `agents.steeringEnabled` | Global boolean; defaults to `true`; explicit `false` disables steering |
 | `agents.maxLlmCallsPerTurn` | Global optional positive integer applied independently to each Root or Child Turn; omitted means no Model-call count limit |
 | `agents.memory` | Global; enabled; local `Xenova/all-MiniLM-L6-v2`; chunk `1600/320`; search `6`, `0.25`, weights `0.7/0.3` |
-| `agents.sandbox` | Global startup-only opt-in; disabled; explicit read/write/denied paths; Windows BaseContainer/Linux bubblewrap enforcement belongs to Builtins Environment |
+| `agents.sandbox` | Global startup-only opt-in; disabled; explicit paths and `network: none/outbound/outbound-and-loopback` (default `none`); Windows BaseContainer/Linux bubblewrap enforcement belongs to Builtins Environment |
 | `tools` | `allow=[]`; `deny=[]` |
 | `skills` | `[]`; default names under `agents.defaults.skills`; optional `agents.list[].skills` completely replaces defaults, including explicit `[]` |
 | `context` | Agent Context budgets: `maxFileChars=20000`; `maxTotalChars=150000` |
@@ -78,13 +78,18 @@ Stages 3–5 apply only to Agent-scoped configuration. Global Agent execution po
 | `agents.list[]` | Sparse overrides of Home-discovered Agents; unique nonreserved `id`, optional `enabled`, description, model reference or `"inherit"`, and supported capability overrides; not a registration source |
 | `logger` | Global `info`; file always enabled; Console output selected by Host startup policy |
 
-### Global Memory
+### Global Sandbox and Memory
 
 Sandbox configuration is separately resolved by the Builtins-owned leaf validator.
 It is not an Agent capability or live execution setting; per-Agent placement is
 rejected. Runtime's asynchronous Builtin assembly prepares the SDK before Registry
-publication when enabled, while ordinary section saves preserve the file-only
-configuration. [Sandbox Execution](../specifications/sandbox-execution.md) owns
+publication when enabled. Runtime's `agents:sandbox` Settings section edits the
+enabled flag, network mode and three path lists using the existing section
+editor. It compares resolved saved values with the actual startup configuration,
+reports current startup values and restart requirements, and never publishes
+live Sandbox changes. Other section saves preserve the leaf. No native probe
+or command is executed by a Sandbox save.
+[Sandbox Execution](../specifications/sandbox-execution.md) owns
 the enforcement and lifecycle contract.
 
 Memory is composed by `resolveMemoryConfig()` separately from AgentDefaults.

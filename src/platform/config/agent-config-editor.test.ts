@@ -68,12 +68,33 @@ describe('Agent Home section editing', () => {
   });
 
   it('preserves startup-only Sandbox settings across unrelated section saves and restores', async () => {
-    const sandbox = { enabled: true, readwritePaths: [agentHome] };
+    const sandbox: NonNullable<AgentConfigDocument['agents']>['sandbox'] = {
+      enabled: true, network: 'outbound', write: [agentHome],
+    };
     await write({ agents: { sandbox }, llm: {} });
     const saved = await saveAgentConfigSection(agentHome, { kind: 'memory', settings: { enabled: false } });
     expect((await read()).agents?.sandbox).toEqual(sandbox);
     await restoreAgentConfigSection(agentHome, saved.previous);
     expect((await read()).agents?.sandbox).toEqual(sandbox);
+  });
+
+  it('saves and restores only Sandbox while retaining unrelated latest-file changes', async () => {
+    const previousSandbox = { enabled: true, read: [agentHome] };
+    const original: AgentConfigDocument = {
+      llm: {}, agents: { sandbox: previousSandbox, memory: { enabled: false } },
+      extensions: { entries: { relay: { enabled: false, config: { label: 'unchanged' } } } },
+    };
+    await write(original);
+    const saved = await saveAgentConfigSection(agentHome, {
+      kind: 'sandbox', settings: { enabled: false, network: 'outbound', write: [agentHome] },
+    });
+    expect((await read()).agents?.sandbox).toEqual({
+      enabled: false, network: 'outbound', read: [], write: [agentHome], deny: [],
+    });
+    expect((await read()).extensions).toEqual(original.extensions);
+    await write({ ...(await read()), agents: { ...(await read()).agents, maxLlmCallsPerTurn: 8 } });
+    await restoreAgentConfigSection(agentHome, saved.previous);
+    expect((await read()).agents).toEqual({ sandbox: previousSandbox, memory: { enabled: false }, maxLlmCallsPerTurn: 8 });
   });
 
   it.each([{}, { agents: { memory: {} } }])('restores absent Memory enablement without materializing defaults %#', async document => {

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
+import type { ContainerRequest, PlatformSupport } from '@microsoft/mxc-sdk/v1';
 import { createMxcCommandRunner } from './mxc-runner.js';
 import { resolveSandboxConfig } from './config.js';
 
@@ -31,7 +31,10 @@ function fixture() {
   let envelope = '';
   native.standardInput.on('data', chunk => { envelope += chunk.toString(); });
   const sdk = {
-    getPlatformSupport: vi.fn(() => ({ isSupported: true, availableMethods: ['bubblewrap'] })),
+    getPlatformSupport: vi.fn((): Pick<PlatformSupport, 'isSupported' | 'availableMethods' | 'bubblewrapNetwork'> => ({
+      isSupported: true, availableMethods: ['bubblewrap'],
+      bubblewrapNetwork: { proxyEnforcement: 'supported', warnings: [] },
+    })),
     probe: vi.fn(() => ({
       tier: 'base-container',
       probes: { baseContainerSupportsDenyPaths: true, baseContainerSupportsEnumeratePaths: true },
@@ -57,7 +60,7 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('M
     await symlink('/tmp', alias, 'dir');
     try {
       const test = fixture();
-      await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true, readonlyPaths: [alias] }),
+      await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true, read: [alias] }),
         process.cwd(), async () => test.sdk)).rejects.toThrow('conflicts with private /tmp');
       expect(test.sdk.spawn).not.toHaveBeenCalled();
     } finally {
@@ -68,9 +71,57 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('M
 
   it.skipIf(process.platform !== 'linux')('requires bubblewrap rather than accepting another available backend', async () => {
     const test = fixture();
-    test.sdk.getPlatformSupport.mockReturnValue({ isSupported: true, availableMethods: ['lxc'] });
+    test.sdk.getPlatformSupport.mockReturnValue({
+      isSupported: true, availableMethods: ['lxc'],
+      bubblewrapNetwork: { proxyEnforcement: 'supported', warnings: [] },
+    });
     await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk))
       .rejects.toThrow('Linux bubblewrap is unavailable');
+    expect(test.sdk.spawn).not.toHaveBeenCalled();
+  });
+
+  it.each(['none', 'outbound', 'outbound-and-loopback'] as const)(
+    'maps %s to native policy and trusted npm behavior without expanding file grants', async network => {
+      const test = fixture();
+      const config = resolveSandboxConfig({ enabled: true, network, read: [process.cwd()] });
+      if (process.platform === 'linux' && network === 'outbound-and-loopback') {
+        await expect(createMxcCommandRunner(config, process.cwd(), async () => test.sdk))
+          .rejects.toThrow('does not support agents.sandbox.network');
+        expect(test.sdk.spawn).not.toHaveBeenCalled();
+        return;
+      }
+      const runner = await createMxcCommandRunner(config, process.cwd(), async () => test.sdk);
+      const running = runner({ command: 'x', cwd: process.cwd(), env: {} });
+      await vi.waitFor(() => expect(test.native.wait).toHaveBeenCalled());
+      expect(test.request()?.network).toEqual({
+        egress: { default: network === 'none' ? 'deny' : 'allow' },
+        ingress: { default: 'deny', hostLoopback: network === 'outbound-and-loopback' ? 'allow' : 'deny' },
+      });
+      expect(test.request()?.environment?.npm_config_offline).toBe(network === 'none' ? 'true' : 'false');
+      expect(test.request()?.filesystem?.readonlyPaths).toContain(process.cwd());
+      expect(test.request()?.filesystem?.readwritePaths).not.toContain(process.cwd());
+      test.native.standardOutput.write('{"type":"started","pid":123}\n');
+      await running.started;
+      test.finish();
+      expect((await running.completion).status).toBe('completed');
+    },
+  );
+
+  it('rejects unavailable network capability before starting user code', async () => {
+    const test = fixture();
+    if (process.platform === 'linux') {
+      test.sdk.getPlatformSupport.mockReturnValue({
+        isSupported: true, availableMethods: ['bubblewrap'],
+        bubblewrapNetwork: { proxyEnforcement: 'unsupported', warnings: ['missing slirp4netns'] },
+      });
+    } else {
+      test.sdk.probe.mockReturnValue({
+        tier: 'unsupported',
+        probes: { baseContainerSupportsDenyPaths: true, baseContainerSupportsEnumeratePaths: true },
+      });
+    }
+    await expect(createMxcCommandRunner(resolveSandboxConfig({ enabled: true, network: 'outbound' }),
+      process.cwd(), async () => test.sdk)).rejects.toThrow('unavailable');
     expect(test.sdk.spawn).not.toHaveBeenCalled();
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SettingsRequests, agentPolicySettings, executionPolicySettings, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders, settingsTools } from './settings';
+import { SettingsRequests, agentPolicySettings, executionPolicySettings, sandboxPolicySettings, credentialDraft, SAVED_CREDENTIAL_MASK, modelDraft, modelSettings, parseSection, settingsProviders, settingsTools } from './settings';
 
 afterEach(() => vi.useRealTimers());
 
@@ -10,6 +10,33 @@ describe('Settings client', () => {
     defaults: { steeringEnabled: false, maxSubagentDepth: 1 },
     resolvedSettings: { steeringEnabled: false, maxSubagentDepth: 1 },
   };
+
+  it('parses separate saved/startup Sandbox settings and serializes path lists without changing path spellings', () => {
+    const settings = { enabled: false, network: 'none', read: [], write: [], deny: [] };
+    const sandbox = {
+      id: 'agents:sandbox', kind: 'sandbox', revision: 'sandbox-revision', restartRequired: true,
+      settings, appliedSettings: { ...settings, enabled: true, network: 'outbound' },
+      platform: 'linux', form: { credentials: {} },
+    };
+    expect(parseSection(sandbox)).toMatchObject({
+      settings, sandbox: { applied: sandbox.appliedSettings, platform: 'linux' },
+    });
+    expect(sandboxPolicySettings({
+      enabled: true, network: 'outbound', read: 'C:\\read only\r\n\n/data',
+      write: '/work', deny: '',
+    })).toEqual({
+      enabled: true, network: 'outbound', read: ['C:\\read only', '/data'],
+      write: ['/work'], deny: [],
+    });
+    const saved = { enabled: false, network: 'none' as const, read: ['/reference\n/part'], write: [], deny: [] };
+    const draft = { enabled: true, network: 'outbound' as const, read: saved.read.join('\n'), write: '', deny: '' };
+    expect(sandboxPolicySettings(draft, saved).read).toEqual(saved.read);
+    expect(() => sandboxPolicySettings({ ...draft, read: '/changed' }, saved)).toThrow('line breaks');
+    for (const patch of [
+      { kind: 'extension' }, { appliedSettings: undefined }, { platform: false },
+      { settings: { ...settings, network: 'all' } }, { settings: { ...settings, deny: 'not-a-list' } },
+    ]) expect(() => parseSection({ ...sandbox, ...patch })).toThrow();
+  });
 
   it('parses Memory enablement and rejects extra fields or invalid values', () => {
     const memory = {

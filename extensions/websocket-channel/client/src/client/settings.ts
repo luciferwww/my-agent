@@ -121,6 +121,59 @@ export interface SettingsSection {
     defaults: ExecutionSettings;
     resolved: ExecutionSettings;
   };
+  sandbox?: {
+    applied: SandboxSettings;
+    platform: string;
+  };
+}
+
+export interface SandboxSettings {
+  enabled: boolean;
+  network: 'none' | 'outbound' | 'outbound-and-loopback';
+  read: string[];
+  write: string[];
+  deny: string[];
+}
+
+export function parseSandboxSettings(value: unknown): SandboxSettings {
+  const settings = object(value);
+  const enabled = settings['enabled'];
+  const network = settings['network'];
+  if (typeof enabled !== 'boolean'
+    || (network !== 'none' && network !== 'outbound' && network !== 'outbound-and-loopback')
+    || Object.keys(settings).some(key => !['enabled', 'network', 'read', 'write', 'deny'].includes(key))) {
+    throw new Error('Malformed Sandbox Settings.');
+  }
+  const paths = (name: string): string[] => {
+    const values = settings[name];
+    if (!Array.isArray(values)) throw new Error(`Malformed Sandbox ${name}.`);
+    return values.map((value: unknown) => {
+      if (typeof value !== 'string') throw new Error(`Malformed Sandbox ${name}.`);
+      return value;
+    });
+  };
+  return { enabled, network, read: paths('read'), write: paths('write'), deny: paths('deny') };
+}
+
+export function sandboxPolicySettings(draft: {
+  enabled: boolean;
+  network: SandboxSettings['network'];
+  read: string;
+  write: string;
+  deny: string;
+}, saved?: SandboxSettings): SandboxSettings {
+  const paths = (name: 'read' | 'write' | 'deny') => {
+    const previous = saved?.[name];
+    if (previous && draft[name] === previous.join('\n')) return [...previous];
+    if (previous?.some(path => /[\r\n]/u.test(path))) {
+      throw new Error(`${name} contains a path with line breaks; edit that list in the configuration file.`);
+    }
+    return draft[name].split(/\r?\n/u).filter(Boolean);
+  };
+  return parseSandboxSettings({
+    enabled: draft.enabled, network: draft.network,
+    read: paths('read'), write: paths('write'), deny: paths('deny'),
+  });
 }
 
 export interface ExecutionSettings {
@@ -316,6 +369,10 @@ export function parseSection(value: unknown): SettingsSection {
     };
   });
   const execution = section['id'] === 'agents:execution';
+  const sandbox = section['id'] === 'agents:sandbox';
+  if (sandbox && (section['kind'] !== 'sandbox' || typeof section['platform'] !== 'string')) {
+    throw new Error('Malformed Sandbox Settings section.');
+  }
   if (section['id'] === 'agents:memory') {
     const settings = object(section['settings']);
     if (section['kind'] !== 'memory' || typeof settings['enabled'] !== 'boolean'
@@ -332,7 +389,8 @@ export function parseSection(value: unknown): SettingsSection {
   return {
     id: section['id'], revision: section['revision'],
     name: typeof section['name'] === 'string' ? section['name'] : section['id'],
-    settings: execution ? parseExecutionSettings(section['settings']) : object(section['settings']),
+    settings: execution ? parseExecutionSettings(section['settings']) : sandbox
+      ? { ...parseSandboxSettings(section['settings']) } : object(section['settings']),
     restartRequired: section['restartRequired'],
     ...(typeof section['applicationStatus'] === 'string' ? { applicationStatus: section['applicationStatus'] } : {}),
     fields, credentials,
@@ -344,6 +402,10 @@ export function parseSection(value: unknown): SettingsSection {
     ...(execution ? { execution: {
       defaults: parseExecutionSettings(section['defaults'], true),
       resolved: parseExecutionSettings(section['resolvedSettings'], true),
+    } } : {}),
+    ...(sandbox ? { sandbox: {
+      applied: parseSandboxSettings(section['appliedSettings']),
+      platform: String(section['platform']),
     } } : {}),
     ...(section['kind'] === 'agent' || section['kind'] === 'agent-defaults'
       ? { agent: parseAgentView(section) } : {}),

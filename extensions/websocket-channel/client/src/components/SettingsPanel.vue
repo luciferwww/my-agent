@@ -2,8 +2,8 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import type { SettingsActionResult } from 'my-agent/extension-api';
 import {
-  agentPolicySettings, executionPolicySettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools, settingsSkills,
-  type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField, type SettingsSkill,
+  agentPolicySettings, executionPolicySettings, sandboxPolicySettings, parseSandboxSettings, modelDraft, modelSettings, object, parseSection, settingsProviders, settingsTools, settingsSkills,
+  type SandboxSettings, type ModelDraft, type SettingsSection, type SettingsProvider, type SettingsTool, type SettingsField, type SettingsSkill,
 } from '../client/settings';
 import SettingsCredential, { type SecretDraft } from './SettingsCredential.vue';
 import SettingsToolSelect from './SettingsToolSelect.vue';
@@ -34,6 +34,12 @@ interface Draft {
   deny: string;
   skillMode: 'inherit' | 'explicit';
   skills: string[];
+  sandbox?: {
+    network: SandboxSettings['network'];
+    read: string;
+    write: string;
+    deny: string;
+  };
 }
 const dialog = ref<HTMLDialogElement>();
 const drafts = ref<Draft[]>([]);
@@ -45,13 +51,13 @@ const extensions = computed(() => drafts.value.filter((draft) => draft.section.i
 const agents = computed(() => drafts.value.filter(draft => draft.section.agent));
 const sharedDefaults = computed(() => drafts.value.find(draft => draft.section.id === 'agents:defaults'));
 const globalSettings = computed(() => drafts.value.filter(draft =>
-  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory'));
-const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills || draft.section.id === 'agents:memory'));
+  draft.section.id === 'agents:execution' || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory' || draft.section.sandbox));
+const agentSettings = computed(() => drafts.value.filter(draft => draft.section.agent || draft.section.execution || draft.section.skills || draft.section.sandbox || draft.section.id === 'agents:memory'));
 const selectedCategory = computed(() => selectedSection.value === 'general' ? 'general'
   : ['llm', 'builtin', 'provider'].includes(selectedSection.value) ? 'llm'
   : ['agents', 'agent-global', 'agent-list', 'general-purpose'].includes(selectedSection.value)
     || visibleDrafts.value[0]?.section.agent || visibleDrafts.value[0]?.section.execution || visibleDrafts.value[0]?.section.skills
-    || visibleDrafts.value[0]?.section.id === 'agents:memory' ? 'agents' : 'extensions');
+    || visibleDrafts.value[0]?.section.sandbox || visibleDrafts.value[0]?.section.id === 'agents:memory' ? 'agents' : 'extensions');
 const categories = computed(() => [
   { id: 'general', name: 'General', description: 'Web client preferences', drafts: [] },
   { id: 'llm', name: 'LLM', description: 'Models & providers', drafts: drafts.value.filter((draft) => draft.section.id === 'llm') },
@@ -72,6 +78,11 @@ const agentDiagnostics = ref<unknown[]>([]);
 const agentTab = ref<'configuration' | 'context'>('configuration');
 const contextFile = ref('IDENTITY.md');
 const contextNames = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'TOOLS.md'];
+const sandboxNetworkOptions: { value: SandboxSettings['network']; label: string }[] = [
+  { value: 'none', label: 'No external network' },
+  { value: 'outbound', label: 'Outbound, no host loopback' },
+  { value: 'outbound-and-loopback', label: 'Outbound and host loopback' },
+];
 const providers = ref<SettingsProvider[]>([]);
 const tools = ref<SettingsTool[]>([]);
 const skills = ref<SettingsSkill[]>([]);
@@ -139,6 +150,7 @@ function draftSignature(draft: Draft): string {
     draft.enabled, draft.config, draft.secrets,
     draft.allowMode, draft.allow, draft.deny,
     draft.skillMode, draft.skills,
+    draft.sandbox,
   ]);
 }
 function isDirty(draft: Draft): boolean {
@@ -148,6 +160,7 @@ function makeDraft(section: SettingsSection): Draft {
   const builtin = section.settings['builtin'] === undefined ? undefined : object(section.settings['builtin']);
   const reference = section.settings['defaultModel'] === undefined ? undefined : object(section.settings['defaultModel']);
   const savedConfig = section.settings['config'] === undefined ? {} : object(section.settings['config']);
+  const sandbox = section.sandbox ? parseSandboxSettings(section.settings) : undefined;
   const tools = section.agent && section.settings['tools'] !== undefined ? object(section.settings['tools']) : {};
   if (builtin && (!Array.isArray(builtin['models']) || typeof builtin['baseURL'] !== 'string')) {
     throw new Error('Malformed Built-in settings.');
@@ -169,6 +182,10 @@ function makeDraft(section: SettingsSection): Draft {
       .map((field) => [field.name, Object.hasOwn(savedConfig, field.name) ? savedConfig[field.name] : undefined])),
     secrets: Object.fromEntries(Object.keys(section.credentials).map((path) => [path, { operation: 'keep', value: '' }])),
     stale: false, fileUnknown: false,
+    ...(sandbox ? { sandbox: {
+      network: sandbox.network, read: sandbox.read.join('\n'),
+      write: sandbox.write.join('\n'), deny: sandbox.deny.join('\n'),
+    } } : {}),
   };
   draft.baseline = draftSignature(draft);
   return draft;
@@ -237,6 +254,7 @@ function builtin(draft: Draft) {
 }
 function settings(draft: Draft) {
   if (draft.section.id === 'agents:memory') return { enabled: draft.enabled };
+  if (draft.sandbox) return sandboxPolicySettings({ ...draft.sandbox, enabled: draft.enabled }, parseSandboxSettings(draft.section.settings));
   if (draft.section.execution) return executionPolicySettings(draft.config);
   if (draft.section.agent) {
     const result = agentPolicySettings(draft.section, draft);
@@ -268,7 +286,7 @@ async function save(draft: Draft) {
     const input = {
       sectionId: draft.section.id, expectedRevision: draft.section.revision,
       settings: settings(draft),
-      ...(draft.section.agent || draft.section.execution || draft.section.skills || draft.section.id === 'agents:memory' ? {} : { credentials: credentials(draft) }),
+      ...(draft.section.agent || draft.section.execution || draft.section.skills || draft.section.sandbox || draft.section.id === 'agents:memory' ? {} : { credentials: credentials(draft) }),
     };
     const response = props.execute('update', input);
     clearSecretValues(draft);
@@ -329,7 +347,7 @@ function sharedToolSummary(field: 'allow' | 'deny'): string {
 }
 function backTarget(draft: Draft): string {
   if (draft.section.id === 'llm') return 'llm';
-  if (draft.section.execution || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory') return 'agent-global';
+  if (draft.section.execution || draft.section.sandbox || draft.section.id === 'agents:defaults' || draft.section.id === 'agents:skills' || draft.section.id === 'agents:memory') return 'agent-global';
   return draft.section.agent ? 'agent-list' : 'extensions';
 }
 function backLabel(draft: Draft): string {
@@ -497,7 +515,7 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
       <h3>Agents</h3>
       <div class="settings-list">
         <div v-for="group in [
-          { id: 'agent-global', name: 'Global settings', description: 'Execution policy, default Tool permissions and Skills', drafts: globalSettings },
+          { id: 'agent-global', name: 'Global settings', description: 'Execution policy, Sandbox, Memory, Tool permissions and Skills', drafts: globalSettings },
           { id: 'agent-list', name: 'Agent list', description: 'Built-in and named Agents', drafts: agents.filter(item => !item.section.agent?.builtIn) },
         ]" :key="group.id" class="settings-list-row">
           <div class="settings-list-copy">
@@ -516,12 +534,12 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
     <section v-if="selectedSection === 'agent-global'" class="settings-section">
       <button type="button" class="secondary settings-back" @click="selectedSection = 'agents'">Back to Agents</button>
       <h3>Global settings</h3>
-      <p class="settings-description">Configure execution policy, Memory, default Tool permissions and Skills. Save each section independently.</p>
+      <p class="settings-description">Configure execution policy, Sandbox, Memory, default Tool permissions and Skills. Save each section independently.</p>
       <div class="settings-list">
         <div v-for="draft in globalSettings" :key="draft.section.id" class="settings-list-row">
           <div class="settings-list-copy">
             <strong>{{ draft.section.name }}</strong>
-            <span>{{ draft.section.execution ? 'Global execution controls' : draft.section.id === 'agents:memory' ? 'Global Memory enablement. Saved changes require a service restart.' : draft.section.skills ? 'Default Skill selection for Root and Child Turns.' : 'Shared approval bypass and prohibited Tools.' }}</span>
+            <span>{{ draft.section.execution ? 'Global execution controls' : draft.section.sandbox ? 'Global Exec containment. Saved changes require a service restart.' : draft.section.id === 'agents:memory' ? 'Global Memory enablement. Saved changes require a service restart.' : draft.section.skills ? 'Default Skill selection for Root and Child Turns.' : 'Shared approval bypass and prohibited Tools.' }}</span>
             <div class="settings-markers">
               <span v-if="isDirty(draft)" class="settings-badge">Unsaved</span>
               <span v-if="draft.section.restartRequired" class="settings-badge">Restart required</span>
@@ -678,6 +696,24 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
           <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enable Memory</span></label>
           <p class="settings-help">Memory uses a local embedding model. When required files are not cached, they are downloaded from Hugging Face. If the source is unreachable, set HF_ENDPOINT to a trusted Hugging Face-compatible mirror and restart.</p>
           <p class="settings-description">Saved changes require a service restart.</p>
+        </template>
+        <template v-else-if="draft.sandbox && draft.section.sandbox">
+          <p class="settings-help">Global containment for Exec and its descendants, not host file/web tools or arbitrary Extensions. Tool approval remains separate.</p>
+          <p class="settings-description" role="status">Currently running: Sandbox {{ draft.section.sandbox.applied.enabled ? 'enabled' : 'disabled (host-direct Exec)' }}.
+            Network policy: {{ draft.section.sandbox.applied.enabled ? draft.section.sandbox.applied.network : 'not enforced while Sandbox is disabled' }}.</p>
+          <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enable Sandbox</span></label>
+          <SettingsSelect v-model="draft.sandbox.network" label="Network access" :options="sandboxNetworkOptions" />
+          <p v-if="!draft.enabled" class="settings-warning">With Sandbox disabled after restart, Exec runs directly on the host with normal account access. Saved network and path restrictions are not enforced.</p>
+          <p v-if="draft.sandbox.network === 'outbound-and-loopback'" class="settings-warning" role="status">Host loopback lets commands and dependencies reach local services that may trust localhost. Access is bidirectional. Selecting and saving this mode explicitly authorizes it.</p>
+          <p v-if="draft.enabled && draft.section.sandbox.platform === 'linux' && draft.sandbox.network === 'outbound-and-loopback'" class="settings-warning" role="status">Linux MXC 1.1.0 does not support host-loopback access. This configuration can be saved, but enabling it will fail service startup rather than weaken isolation.</p>
+          <p v-if="draft.enabled && !['win32', 'linux'].includes(draft.section.sandbox.platform)" class="settings-warning" role="status">Sandbox execution is not supported on this Host platform. Enabling it will fail service startup.</p>
+          <p v-if="draft.section.sandbox.platform === 'linux' && draft.sandbox.network !== 'none'" class="settings-help">Linux outbound requires operator-provisioned private-network helpers and can reach private-network destinations. The Agent does not install helpers automatically.</p>
+          <p class="settings-help">Use absolute paths from the Host filesystem, one per line. No globs or UNC paths. The working directory is not granted automatically.</p>
+          <p class="settings-help">Read: read-only. Write: read and write. Deny: denied content access under the native policy rules.</p>
+          <label>Read paths<textarea v-model="draft.sandbox.read" rows="4" spellcheck="false"></textarea></label>
+          <label>Write paths<textarea v-model="draft.sandbox.write" rows="4" spellcheck="false"></textarea></label>
+          <label>Deny paths<textarea v-model="draft.sandbox.deny" rows="4" spellcheck="false"></textarea></label>
+          <p class="settings-description">Saved changes require a service restart; running commands keep their original permissions. Saving validates configuration, not native Host capability.</p>
         </template>
         <template v-else-if="draft.section.execution">
           <label class="settings-checkbox">

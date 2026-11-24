@@ -36,7 +36,9 @@ export function validateCommandEnvironment(value: unknown): Record<string, strin
   const names = new Set<string>();
   const entries: Array<[string, string]> = [];
   for (const [name, content] of Object.entries(value)) {
-    const normalized = process.platform === 'win32' ? name.toLowerCase() : name;
+    // npm configuration names are case-insensitive even on Linux.
+    const normalized = process.platform === 'win32' || name.toLowerCase().startsWith('npm_config_')
+      ? name.toLowerCase() : name;
     if (!name || /[=\0]/u.test(name) || typeof content !== 'string' || content.includes('\0')) {
       throw new Error('Invalid exec environment entry');
     }
@@ -82,6 +84,8 @@ export function prepareChildEnvironment(
   if (!boundRoot || pathIdentity(boundRoot) !== pathIdentity(request.root)) {
     throw new Error('Sandbox request does not match the owned temporary root');
   }
+  const offline = bootstrapEnvironment.npm_config_offline ?? 'true';
+  if (offline !== 'true' && offline !== 'false') throw new Error('Invalid sandbox npm offline setting');
   const root = realpathSync.native(request.root);
   function prepare(path: string | undefined): string {
     if (!path || !isAbsolute(path) || !within(root, resolve(path))) {
@@ -115,7 +119,7 @@ export function prepareChildEnvironment(
     ...platformEnvironment,
     HOME: prepare(join(root, 'home')),
     npm_config_cache: prepare(join(root, 'npm-cache')),
-    npm_config_offline: 'true',
+    npm_config_offline: offline,
     npm_config_update_notifier: 'false',
     ...validateCommandEnvironment(request.environment),
   };

@@ -105,7 +105,8 @@ execution unchanged. Startup awaits SDK validation before publication; unsupport
 enabled hosts/requests fail without fallback.
 
 A fixed Node entry inside the boundary prepares private HOME/appdata/TEMP and
-offline npm data before unchanged cmd execution. Its initial frame confirms
+private npm data before unchanged cmd execution. npm is offline only in network
+mode `none`. Its initial frame confirms
 actual Shell spawn; later output remains user data. Host/caller Node startup hooks
 cannot run in the bootstrap. Necessary installed package metadata is read-only,
 not a whole-project read grant.
@@ -123,7 +124,12 @@ runtime/npm-library reads cover necessary installed tool paths without exposing
 all user data. Windows Shell PID presentation and bootstrap behavior are unchanged.
 
 Content access follows the configured/native effective policy; cwd is not a
-grant. External networking and host loopback are denied for Shell descendants.
+grant. Startup-only `network` is `none` (default), `outbound`, or
+`outbound-and-loopback`. General ingress stays denied; the third mode enables
+bidirectional host loopback with a startup risk warning on supported Windows
+hosts. Linux rejects that mode and requires MXC's additional private-network
+helpers for outbound mode; missing capability fails instead of using host
+networking. Outbound can reach private-network destinations on Linux.
 The original directory remains in use; no copy/rollback or resource-quota service
 is provided. Host file/web tools and arbitrary Extensions remain outside this
 boundary. [Sandbox Execution](../specifications/sandbox-execution.md) owns details.

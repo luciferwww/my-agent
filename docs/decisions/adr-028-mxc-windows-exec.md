@@ -6,6 +6,7 @@
 > Supersedes: none
 > Implementation: Implemented with recorded Windows/Linux automated and owner manual validation
 > Linux amendment: Owner accepted recorded delivery and manual scope on 2026-11-24; additional platforms/policies remain outside validation
+> Network amendment: Owner accepted three-state startup-only networking on 2026-11-24
 
 ## Context
 
@@ -29,7 +30,14 @@ original cwd and ordinary approval semantics remain unchanged.
   unsupported hosts/requests fail closed; no native CLI/.NET or host fallback.
 - First scope is Exec and descendants, in the original directory with explicit
   content permissions and separate directory metadata access. No automatic
-  copies, writeback, credential grants or external network.
+  copies, writeback or credential grants. Network defaults to denied.
+- A single `agents.sandbox.network` enum selects `none`, `outbound`, or
+  `outbound-and-loopback`; file grants and Tool approval do not change.
+  Explicit host-loopback authorization produces a risk warning, not a policy
+  refusal. Native capability requirements still fail closed. General ingress
+  remains denied; host loopback is bidirectional. Linux supports outbound only
+  with operator-provisioned private-network helpers and rejects host-loopback
+  allow with SDK 1.1.0. No domain proxy or live network-policy update is added.
 - Keep Core independent of MXC. Runtime awaits Builtins initialization before
   publication; a private execution control owns start, termination and release.
 - A fixed trusted Node entry inside the sandbox prepares private TEMP and

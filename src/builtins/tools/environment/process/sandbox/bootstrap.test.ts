@@ -24,6 +24,7 @@ describe('sandbox bootstrap', () => {
       expect(() => validateCommandEnvironment({ HOME: 'other' })).toThrow('Reserved');
     }
     expect(() => parseBootstrapRequest('{"command":"x","root":"x","environment":{}}')).toThrow('Invalid');
+    expect(() => validateCommandEnvironment({ NPM_CONFIG_OFFLINE: 'false' })).toThrow('Reserved');
   });
 
   it('prepares owned paths but rejects a reparse/symlink escape before creation', async () => {
@@ -34,6 +35,11 @@ describe('sandbox bootstrap', () => {
       const environment = { [ROOT_VARIABLE]: root, TEMP: join(root, 'tmp'), TMP: join(root, 'tmp'), LOCALAPPDATA: join(root, 'data') };
       const result = prepareChildEnvironment({ command: 'x', root, environment: { NODE_OPTIONS: '--require ./hook.cjs' } }, environment);
       expect(result.NODE_OPTIONS).toBe('--require ./hook.cjs');
+      expect(result.npm_config_offline).toBe('true');
+      expect(prepareChildEnvironment({ command: 'x', root, environment: {} },
+        { ...environment, npm_config_offline: 'false' }).npm_config_offline).toBe('false');
+      expect(() => prepareChildEnvironment({ command: 'x', root, environment: {} },
+        { ...environment, npm_config_offline: 'invalid' })).toThrow('npm offline setting');
       expect(result[ROOT_VARIABLE]).toBeUndefined();
       if (process.platform === 'win32') {
         expect(() => prepareChildEnvironment({ command: 'x', root, environment: {} },

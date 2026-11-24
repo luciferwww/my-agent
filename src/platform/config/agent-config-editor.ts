@@ -9,6 +9,7 @@ import { parseCredentialEnvironmentReference } from './credential-materializatio
 import { replaceAgentConfigFile } from './file-publication.js';
 import { extensionSettingsFields, prepareExtensionConfig } from '../../extension/acquisition/configuration.js';
 import { validateSkillSelection, SkillSelectionValidationError } from '../../core/skills/index.js';
+import { resolveSandboxConfig, SandboxConfigValidationError, type SandboxConfig } from '../../builtins/tools/environment/index.js';
 
 export type CredentialChange =
   | { readonly operation: 'keep' }
@@ -19,6 +20,7 @@ export type ConfigSectionEdit =
   | AgentPolicyEdit
   | AgentExecutionEdit
   | { readonly kind: 'memory'; readonly settings: unknown }
+  | { readonly kind: 'sandbox'; readonly settings: unknown }
   | {
       readonly kind: 'llm';
       readonly settings: unknown;
@@ -44,6 +46,7 @@ export interface AgentExecutionEdit {
 
 export type ConfigSectionPreimage =
   | { readonly kind: 'memory'; readonly enabled: boolean | undefined; readonly present: boolean }
+  | { readonly kind: 'sandbox'; readonly value: NonNullable<AgentConfigDocument['agents']>['sandbox'] }
   | { readonly kind: 'agent-policy'; readonly edit: AgentPolicyEdit }
   | { readonly kind: 'agent-execution'; readonly settings: Partial<AgentExecutionConfig> }
   | { readonly kind: 'llm'; readonly value: AgentConfigDocument['llm'] }
@@ -61,6 +64,19 @@ export function editAgentConfigSection(
   edit: ConfigSectionEdit,
 ): { document: AgentConfigDocument; previous: ConfigSectionPreimage } {
   const settings = object(edit.settings, '/settings');
+  if (edit.kind === 'sandbox') {
+    let sandbox: SandboxConfig;
+    try {
+      sandbox = resolveSandboxConfig(settings);
+    } catch (error) {
+      if (!(error instanceof SandboxConfigValidationError)) throw error;
+      throw new ConfigEditError(`/settings${error.fieldPath ? `/${error.fieldPath}` : ''}`);
+    }
+    const previous: ConfigSectionPreimage = { kind: 'sandbox', value: document.agents?.sandbox };
+    const candidate: AgentConfigDocument = { ...document, agents: { ...document.agents, sandbox } };
+    validateAgentConfigDocument(candidate);
+    return { document: candidate, previous };
+  }
   if (edit.kind === 'memory') {
     onlyKeys(settings, ['enabled'], '/settings');
     if (typeof settings['enabled'] !== 'boolean') throw new ConfigEditError('/settings/enabled');
@@ -226,6 +242,14 @@ export async function restoreAgentConfigSection(
     const agents = { ...current.agents };
     agents.memory = memory;
     if (!previous.present && Object.keys(memory).length === 0) delete agents.memory;
+    const document = { ...current, agents: current.agents };
+    if (Object.keys(agents).length === 0) delete document.agents;
+    else document.agents = agents;
+    restored = document;
+  } else if (previous.kind === 'sandbox') {
+    const agents = { ...current.agents };
+    if (previous.value === undefined) delete agents.sandbox;
+    else agents.sandbox = previous.value;
     const document = { ...current, agents: current.agents };
     if (Object.keys(agents).length === 0) delete document.agents;
     else document.agents = agents;
