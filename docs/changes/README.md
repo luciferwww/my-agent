@@ -13,9 +13,11 @@ retaining a Change record.
 
 ## Active
 
-- [MXC Sandbox Adoption](active/mxc-sandbox/plan.md), with its [Specification](active/mxc-sandbox/specification.md), [completed Spike](active/mxc-sandbox/spike-specification.md) and [Results](active/mxc-sandbox/spike-results.md) - Owner accepted Windows Exec delivery and Node 24 migration; implementation, automated checks and owner-reported Agent manual tests passed. Independent review's foreground-quota issue was fixed. The full default-port package-smoke follow-up remains documented; formal closeout is pending. No automatic archive/commit/push.
+No active Changes.
 
 ## Archived
+
+- [MXC Sandbox Adoption](archive/mxc-sandbox/plan.md), with its [Specification](archive/mxc-sandbox/specification.md), [completed Spike](archive/mxc-sandbox/spike-specification.md) and [Results](archive/mxc-sandbox/spike-results.md) - Owner accepted Windows delivery closeout and authorized archive/documentation commit on 2026-11-25. Full unmodified Windows package verification passed (485 files), resolving the former 8787 blocker; earlier Windows automated/manual, installed MXC smoke and review results remain recorded. No additional platform guarantee, push or automatic service restart.
 
 - [Sandbox Filesystem Policy and Approval](archive/sandbox-filesystem-policy/plan.md), with its [Specification](archive/sandbox-filesystem-policy/specification.md) - Owner confirmed Windows manual verification and authorized archive/scoped commit on 2026-11-25. Final 99 focused Windows Unit cases, eight selected Runtime cases, 16 Fitness, five native Windows Exec cases, full lint/build and compiled Linux file-tool smoke passed. Review findings and limitations are recorded; no Linux manual verification or native Linux MXC revalidation claimed. No push.
 

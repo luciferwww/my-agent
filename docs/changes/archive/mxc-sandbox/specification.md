@@ -1,20 +1,23 @@
 # MXC-backed Tool Execution
 
-> Status: Implemented; Windows automated and owner-reported Agent manual tests passed; closeout pending
-> Date: 2026-11-23
-> Revised: 2026-11-24
-> Owner: Project owner
-> Related Plan: [MXC Sandbox Adoption](plan.md)
-> Readiness: Owner accepted the design, bounded Spike and Node 24 project migration on 2026-11-24
+> - **Status:** Validated within the recorded Windows scope; owner accepted closeout
+> - **Date:** 2026-11-23
+> - **Revised:** 2026-11-25
+> - **Owner:** Project owner
+> - **Archived:** 2026-11-25
+> - **Related Plan:** [MXC Sandbox Adoption](plan.md)
+> - **Authorization:** Owner accepted design, recorded Windows automated/manual results and full package follow-up; archive and documentation commit authorized, no push
 
 This Change records delivery details without owning durable authority.
 [Sandbox Execution](../../../specifications/sandbox-execution.md) and
 [ADR-028](../../../decisions/adr-028-mxc-windows-exec.md) own the accepted contract
-and rationale. Implementation is authorized; validation/closeout is not complete.
+and rationale. Implementation, recorded Windows validation and owner closeout
+are complete. Earlier design sections retain the initial delivery profile;
+current network/file-tool amendments are owned by the stable contract.
 
 The owner reported all discussed Agent manual tests passed on 2026-11-24.
-The Plan records this validation separately from formal closeout and the
-remaining package-smoke limitation.
+The Plan records this validation separately from formal closeout. The former
+package-smoke limitation was resolved by full Windows verification on 2026-11-25.
 
 The [Results](spike-results.md) now include Node 24 SDK, ordinary offline npm-task
 and metadata-boundary validation, plus a contained private-TEMP bootstrap.
@@ -30,8 +33,8 @@ verified file/network boundary. Commands still use the normal Tool approval and
 Process lifecycle. When requested isolation cannot be established, report a
 failure rather than executing on the host.
 
-MXC is the selected technology direction, not an already validated integration.
-This Draft neither adds a permission mode nor promises that arbitrary commands,
+MXC is validated within the recorded Windows profile, not for arbitrary workloads.
+This record neither adds a permission mode nor promises that arbitrary commands,
 toolchains, or Windows builds are supported.
 
 ## Scope
@@ -538,10 +541,14 @@ Focused delivery cases must additionally falsify the reviewed contract gaps:
 ## Delivery follow-up
 
 The owner accepted the Node migration, startup-only policy, contained bootstrap
-and first-profile limits. Implementation and automated Windows checks are complete;
-owner delivery acceptance remains pending. The full default-port installed-Host
-check was blocked by an existing 8787 listener; a separate installed-MXC smoke
-passed without altering that listener. See [the Plan](plan.md) for exact evidence.
+and first-profile limits. Implementation, automated Windows checks and
+owner-reported manual checks are complete; owner closeout was accepted on 2026-11-25.
+The formerly blocked default-port check passed on 2026-11-25 after the owner
+manually stopped the existing Agent. The unmodified full `verify:package` script
+verified 485 files and actual empty-Home/default-port/installed-CLI behavior.
+See [the Plan](plan.md) for exact evidence; no user service was automatically restarted.
 
-Host file-tool policy checking and additional platform/resource guarantees remain
-deferred, not implied by the Windows execution boundary.
+Host file-tool policy checking is a later, separately delivered
+[filesystem Change](../../archive/sandbox-filesystem-policy/plan.md), not an
+OS-isolation guarantee from this initial Windows slice. Additional platform and
+resource guarantees are not implied by the package follow-up.

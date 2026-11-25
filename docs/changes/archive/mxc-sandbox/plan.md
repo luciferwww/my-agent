@@ -1,9 +1,11 @@
 # MXC Sandbox Adoption
 
-> Status: Accepted
-> Date: 2026-11-23
-> Owner: Project owner
-> Scope: Approved Windows Exec delivery and Node 24 project migration; no global runtime change or automatic commit/push
+> - **Status:** Accepted; delivery completed and archived
+> - **Date:** 2026-11-23
+> - **Owner:** Project owner
+> - **Archived:** 2026-11-25
+> - **Scope:** Windows Exec delivery and Node 24 migration; full Windows package follow-up completed
+> - **Closeout authorization:** Owner accepted closeout, archive and scoped documentation commit on 2026-11-25; no push or automatic Agent restart
 
 The owner accepted the design and bounded Spike results and authorized
 implementation on 2026-11-24. Earlier approval limits below describe prior
@@ -78,7 +80,7 @@ delivery item.
 | MXC-0 | Draft the bounded design and Spike | Completed | Owner accepted design scope |
 | MXC-1 | Run the Windows MXC Spike | Completed | Owner accepted bounded Windows results |
 | MXC-2 | Accept the adoption design | Completed | ADR-028/contract published; Node 24 project migration accepted |
-| MXC-3 | Implement the accepted slice | In Review | Code, automated Windows checks and owner-reported Agent manual tests passed; formal closeout remains |
+| MXC-3 | Implement the accepted slice | Completed | Windows automated/manual results, installed MXC smoke and full package follow-up passed; owner accepted closeout 2026-11-25 |
 
 Items are not execution authorization. MXC-0 does not authorize MXC-1, and an
 experiment passing does not authorize MXC-3.
@@ -150,7 +152,8 @@ smoke follow-up. Manual validation does not authorize archive, commit or push
 and does not extend the first slice to host file tools or other platforms.
 
 The owner subsequently authorized a scoped commit of this implementation and
-its documentation on 2026-11-24. Archive and push remain unauthorized.
+its documentation on 2026-11-24. Archive and push were not authorized then;
+the later closeout below separately authorizes archive and documentation commit.
 
 ### Automated delivery evidence, 2026-11-24
 
@@ -175,12 +178,33 @@ its documentation on 2026-11-24. Archive and push remain unauthorized.
   shutdown. Native DLLs stayed loaded until verifier exit; fixture deletion was
   performed afterward by its parent, not mistaken for a per-command cleanup leak.
 
-The unchanged full `verify:package` script could not finish its empty-Home default
+At the original validation, the unchanged full `verify:package` script could not finish its empty-Home default
 WebSocket check because an existing service owns `127.0.0.1:8787`. That service
 was not stopped or reconfigured. Packing, installation and initial API checks ran,
 and a separate installed-MXC smoke avoided the port. Retest the full default-port
 check in an environment with 8787 available; do not describe this limitation as a
-passed default-Host scenario.
+passed default-Host scenario. The follow-up below resolves that gate.
+
+### Full Windows package follow-up, 2026-11-25
+
+The owner manually stopped the existing test Agent after a read-only check
+confirmed its listener on port 8787. The verifier then confirmed the default
+port was available and ran the unmodified `npm run verify:package` with portable
+Windows Node 24.22.3 on the current branch (`3501ca9`).
+
+The complete script exited zero and verified 485 package files, fresh installed
+dependencies and API types/Extension acquisition, empty default and explicit
+Agent Home startup, real default-port WebSocket hello/Settings, client serving,
+legacy Host rejection and the installed CLI. This is the full gate, not an
+alternate-port proxy for the empty-Home check. It includes the current accepted
+network/filesystem amendments without changing their documented validation limits.
+
+The script cleaned its temporary install/Home and stopped its owned helpers;
+port 8787 was available afterward. No real user configuration was changed, and
+the previously running Agent was not automatically restarted.
+The old default-port limitation is resolved. After reviewing this result, the
+owner separately accepted closeout and authorized archive and a scoped
+documentation commit on 2026-11-25. No push or automatic Agent restart.
 
 Project manifests/lockfile now require Node 24 LTS and SDK 1.1.0. Restoration used
 install scripts disabled in the live worktree; ABI-specific SQLite validation
