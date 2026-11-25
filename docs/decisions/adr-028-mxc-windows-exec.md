@@ -7,6 +7,7 @@
 > Implementation: Implemented with recorded Windows/Linux automated and owner manual validation
 > Linux amendment: Owner accepted recorded delivery and manual scope on 2026-11-24; additional platforms/policies remain outside validation
 > Network amendment: Owner accepted three-state startup-only networking on 2026-11-24
+> Filesystem amendment: Owner accepted design and confirmed Windows manual verification on 2026-11-25; recorded automated scope retained
 
 ## Context
 
@@ -58,7 +59,15 @@ original cwd and ordinary approval semantics remain unchanged.
 The runtime/native dependencies require migration and package validation.
 Allowed writable project data can still be destroyed; metadata may be visible
 outside the work directory. Host file tools and arbitrary Extensions are not
-OS-confined by this boundary. Shared file-tool policy checks are deferred.
+OS-confined by this boundary. The accepted filesystem amendment adds software
+checks to seven host file/search tools while enabled, sharing explicit execution
+dependency reads but not copying OS baselines or per-Exec temporary grants.
+Same-path/child precedence remains, without extra trusted-write conflict refusal.
+Home-external special approval is removed after wiring or in the same delivery.
+Off-mode file access still uses host permissions; allowed external targets no
+longer require additional Home-based approval. This is intentional broader
+authorization, not OS protection. Recorded automated checks and owner-reported
+Windows manual verification passed; native Linux MXC was not revalidated.
 
 Shell/root completion removes remaining descendants; background servers must
 keep their root alive. CPU, memory and disk quotas are not claimed. Native

@@ -13,6 +13,7 @@ export { resolveEnvironmentPath } from './common/path-policy.js';
 export { createEnvironmentContribution } from './contribution.js';
 export type { EnvironmentContributionOptions } from './contribution.js';
 export { createMxcCommandRunner } from './process/sandbox/mxc-runner.js';
+export { getSandboxDependencyReads } from './process/sandbox/dependencies.js';
 export { resolveSandboxConfig } from './process/sandbox/config.js';
 export { SandboxConfigValidationError } from './process/sandbox/config.js';
 export type { SandboxConfig } from './process/sandbox/config.js';

@@ -89,6 +89,9 @@ editor. It compares resolved saved values with the actual startup configuration,
 reports current startup values and restart requirements, and never publishes
 live Sandbox changes. Other section saves preserve the leaf. No native probe
 or command is executed by a Sandbox save.
+Builtin assembly selects explicit dependency reads once and shares them between
+native Exec and software host file/search checks. User path lists are unchanged;
+backend/OS access and per-Exec temporary grants are not inferred for host tools.
 [Sandbox Execution](../specifications/sandbox-execution.md) owns
 the enforcement and lifecycle contract.
 
@@ -100,7 +103,7 @@ and saving the startup value clears the marker. It does not publish Agent policy
 
 ### Tool policy
 
-`tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. The Runtime-owned Session permission mode is deliberately not configuration and does not alter these projected lists. In `manual`, structured targets outside Agent Home and all Exec calls require current-call Approval even when their Tool names are allowed; internal targets honor allow bypass, and other unmatched Tools request Approval. Missing required Approval fails closed. In process-local `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
+`tools.deny` removes matching definitions from the visible Tool projection and remains final at execution. The Runtime-owned Session permission mode is deliberately not configuration and does not alter these projected lists. In `manual`, all Exec calls require current-call Approval even when their Tool names are allowed; other allowed tools bypass approval regardless of Home-relative/external targets, and unmatched tools request Approval. Missing required Approval fails closed. In process-local `allow_all`, every non-denied registered Tool is automatically authorized. Resource checks are independent and only active for the covered host tools while Sandbox is enabled. Exact names and `*`/`?` globs are supported; `group:*` expansion is not.
 
 ### Configured Agents and delegation
 

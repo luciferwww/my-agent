@@ -520,14 +520,14 @@ The effective policy also grants necessary Node/OS/bootstrap reads, module
 package metadata and private temporary data. Directory metadata can be visible
 outside the writable directory; content permissions remain separate. Native
 overlap/alias rules apply, and implicit Windows access is not hidden.
-The adapter supplies these locations independently of the configured lists:
+Builtin assembly supplies these locations independently of the configured lists:
 
 | Location | Access | Source |
 | --- | --- | --- |
-| Windows `%SystemRoot%\System32` | `read` | Explicit adapter runtime grant |
-| Node executable directory | `read` | Explicit adapter runtime grant |
-| Trusted Bootstrap and its nearest package manifest | `read` | Explicit adapter runtime grant |
-| Installed Linux npm runtime library, when present | `read` | Explicit adapter runtime grant |
+| Windows `%SystemRoot%\System32` | `read` | Explicit dependency shared by Exec and file/search checks |
+| Node executable directory | `read` | Explicit dependency shared by Exec and file/search checks |
+| Trusted Bootstrap and its nearest package manifest | `read` | Explicit dependency shared by Exec and file/search checks |
+| Installed Linux npm runtime library, when present | `read` | Explicit dependency shared by Exec and file/search checks |
 | Unique private temporary root for this Exec | `write` | Dynamically created and owned by the adapter |
 | Paths in the configured `deny` list | `deny` | User configuration, under native policy rules |
 
@@ -558,7 +558,19 @@ bubblewrap backend cannot honor it and fails startup instead of widening access.
 Restart the Host after a change; existing commands do not change permissions
 live. `allow_all` does not disable the
 sandbox. Host file/web tools and arbitrary Extension code remain outside this OS
-boundary; their existing Tool policy is not replaced by the path lists.
+boundary. With Sandbox enabled, Builtin file/search tools additionally check the
+shared explicit read dependencies and configured read/write/deny in software.
+Uncovered paths are rejected; no automatic Agent Home/cwd, OS baseline or Exec
+TEMP grant. Directory permissions inherit to new children, with more-specific
+exceptions. Denied listing/search subtrees are skipped, but path-resolution
+failures such as dangling links are explicit errors rather than hidden entries.
+This is not race-free or OS-level isolation.
+
+Home-external paths no longer trigger special Tool approval in either mode.
+With Sandbox disabled, allowed file tools use ordinary host permissions even
+outside Agent Home; configured resource lists do not restrict them. Normal
+manual approval for unmatched tools and mandatory Exec approval remain.
+Saving Sandbox settings still requires restart to change these resource checks.
 
 Commands get a private HOME/appdata/TEMP and npm cache. npm is forced offline in
 `none`, and is not forced offline in the enabled network modes. Sandbox-reserved

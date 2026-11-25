@@ -6,6 +6,7 @@
 > Linux amendment: Automated WSL/package and recorded Agent manual results accepted by owner on 2026-11-24
 > Network amendment: Three startup-only network modes accepted by owner on 2026-11-24; Linux host loopback remains unsupported
 > Authority: Opt-in Builtin Exec containment and private lifecycle contract
+> Filesystem amendment: Validated for recorded automated checks and owner-reported Windows manual verification on 2026-11-25; no native Linux MXC revalidation
 
 ## Scope and configuration
 
@@ -93,6 +94,34 @@ Approval remains separate: `manual` still requires Exec approval, `allow_all`
 does not remove confinement, and Tool-name deny stays final.
 
 ## Ownership and startup
+
+### Host file-tool policy
+
+With Sandbox enabled, `list_dir`, `read_file`, `file_search`, `grep_search`,
+`write_file`, `edit_file`, and `apply_patch` check shared explicit dependency
+reads plus configured read/write/deny in software. Explicit System32, Node,
+Bootstrap/manifest and selected Linux npm reads are reused, not persisted into
+user path lists. Native OS/mount/metadata access and per-Exec TEMP are not
+automatically granted to host file tools. Uncovered paths are denied.
+With Sandbox disabled, these tools use host permissions without these checks.
+
+Directory rules cover descendants and new files; same canonical path uses
+deny > read > write, with most-specific child rules taking precedence.
+No new trusted-resource write-conflict refusal is introduced. Existing Exec
+required-deny checks and private TEMP ownership are unchanged.
+Denied traversal subtrees are skipped; allowed children remain directly
+addressable. Reads/overwrites follow targets; link removal checks the link entry.
+Missing parents actually created must be writable. Multi-file patch permission
+preflight occurs before mutations but is not a transaction or rollback.
+Realpath checks do not eliminate races or provide OS-level containment.
+
+Tool approval no longer treats Home-external paths specially, including when
+Sandbox is off. Normal allow/deny, mandatory manual Exec approval and absence
+of bypass remain. This intentionally widens off-mode allowed host file access;
+it is not an implicit resource grant while Sandbox is enabled.
+Recorded Windows and Linux-software checks passed; the owner confirmed Windows
+manual verification on 2026-11-25. This is not Linux manual verification and
+does not claim native Linux MXC revalidation.
 
 Core has no SDK dependency. Runtime's Builtin factory may return an array or
 Promise; Builder awaits it in its existing startup cleanup boundary before
@@ -184,10 +213,12 @@ retries or invented recovery of a failed native handle.
 ## Limits and validation
 
 No automatic project copy/rollback, resource-quota framework, Smart Approval,
-MCP/Extension isolation or host file-tool migration. Writable data can be
+MCP/Extension isolation or OS confinement of host file tools. Writable data can be
 destroyed. Metadata visibility, tool compatibility and implicit OS access must
-be described honestly. Shared software path checks for host file tools are a
-separate future decision, not equivalent OS enforcement.
+be described honestly. Shared software file/search checks do not reproduce all
+OS access or eliminate concurrent path-replacement races. Policy/check errors
+propagate explicitly; dangling links encountered by listing are not silently
+treated as policy-denied entries.
 
 Required focused checks cover configuration/preservation, SDK startup failure
 without publication, caller-hook separation, startup frames, precise drain

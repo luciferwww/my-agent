@@ -172,7 +172,7 @@ export class AgentPolicyState {
       agents: freeze(agents),
       profiles,
       disabledIds: new Set(agents.list.filter(entry => entry.enabled === false).map(entry => entry.id)),
-      rootToolPolicy: createApplicationToolPolicy(rootTools, this.config.agentHome),
+      rootToolPolicy: createApplicationToolPolicy(rootTools),
       rootSkills: Object.freeze([...resolvedRoot.skills]),
     });
   }

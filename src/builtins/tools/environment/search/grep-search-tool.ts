@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 import { buildPathMatcher, listDirectoryFiles } from '../common/directory-walk.js';
 
 function parsePositiveInteger(value: unknown, fieldName: string): number | undefined {
@@ -43,7 +44,7 @@ function formatResults(
   ].join('\n');
 }
 
-export function createGrepSearchTool(agentHome: string): Tool {
+export function createGrepSearchTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'grep_search',
     description: 'Search files below a selected directory for matching text or regex patterns.',
@@ -90,13 +91,14 @@ export function createGrepSearchTool(agentHome: string): Tool {
         }
 
         const root = resolveEnvironmentPath(params.path ?? '.', agentHome);
+        await policy?.assert(root.resolvedPath, 'read');
         const maxResults = parsePositiveInteger(params.maxResults, 'maxResults');
         const includeMatcher =
           typeof params.includePattern === 'string' && params.includePattern.trim()
             ? buildPathMatcher(params.includePattern)
             : undefined;
         const contentMatcher = buildContentMatcher(params.query, params.isRegexp);
-        const files = await listDirectoryFiles(root.resolvedPath);
+        const files = await listDirectoryFiles(root.resolvedPath, policy?.canRead);
         const matches: Array<{ path: string; lineNumber: number; line: string }> = [];
 
         for (const file of files) {
@@ -105,6 +107,7 @@ export function createGrepSearchTool(agentHome: string): Tool {
           }
 
           let content: string;
+          await policy?.assert(file.absolutePath, 'read');
           try {
             content = await readFile(file.absolutePath, 'utf8');
           } catch {

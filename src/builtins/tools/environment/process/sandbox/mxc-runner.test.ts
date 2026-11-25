@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ContainerRequest, PlatformSupport } from '@microsoft/mxc-sdk/v1';
 import { createMxcCommandRunner } from './mxc-runner.js';
 import { resolveSandboxConfig } from './config.js';
+import { getSandboxDependencyReads } from './dependencies.js';
 
 function fixture() {
   let resolveWait!: (result: { exitCode: number; timedOut: boolean }) => void;
@@ -158,10 +159,12 @@ describe.skipIf(process.platform !== 'win32' && process.platform !== 'linux')('M
 
   it('keeps caller hooks out of bootstrap env and consumes only the first frame', async () => {
     const test = fixture();
-    const runner = await createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk);
+    const reads = await getSandboxDependencyReads();
+    const runner = await createMxcCommandRunner(resolveSandboxConfig({ enabled: true }), process.cwd(), async () => test.sdk, reads);
     const running = runner({ command: 'node test.cjs', cwd: process.cwd(), env: { NODE_OPTIONS: '--require ./hook.cjs' } });
     await vi.waitFor(() => expect(test.native.wait).toHaveBeenCalled());
     expect(test.request()?.environment?.NODE_OPTIONS).toBeUndefined();
+    expect(test.request()?.filesystem?.readonlyPaths).toEqual(reads);
     expect(test.envelope()).toContain('NODE_OPTIONS');
     test.native.standardOutput.write('{"type":"star');
     test.native.standardOutput.write('ted","pid":123}\n{"type":"started","pid":999}\n' + 'x'.repeat(10000));

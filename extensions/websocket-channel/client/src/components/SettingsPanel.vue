@@ -698,7 +698,7 @@ watch([() => props.open, () => props.connected], ([open, connected], _, onCleanu
           <p class="settings-description">Saved changes require a service restart.</p>
         </template>
         <template v-else-if="draft.sandbox && draft.section.sandbox">
-          <p class="settings-help">Global containment for Exec and its descendants, not host file/web tools or arbitrary Extensions. Tool approval remains separate.</p>
+          <p class="settings-help">OS containment for Exec and its descendants; software path checks for Builtin file/search tools while enabled. Explicit dependency reads are added to your path lists at execution, not saved here. Host web tools and arbitrary Extensions remain outside this boundary. Tool approval remains separate.</p>
           <p class="settings-description" role="status">Currently running: Sandbox {{ draft.section.sandbox.applied.enabled ? 'enabled' : 'disabled (host-direct Exec)' }}.
             Network policy: {{ draft.section.sandbox.applied.enabled ? draft.section.sandbox.applied.network : 'not enforced while Sandbox is disabled' }}.</p>
           <label class="settings-checkbox"><input v-model="draft.enabled" type="checkbox"><span>Enable Sandbox</span></label>

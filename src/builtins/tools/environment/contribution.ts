@@ -10,6 +10,8 @@ import { webFetchTool } from './web/web-fetch-tool.js';
 import { createExecTool } from './process/exec-tool.js';
 import { processTool } from './process/process-tool.js';
 import type { CommandRunner } from './process/exec-types.js';
+import type { SandboxConfig } from './process/sandbox/config.js';
+import { createFilesystemPolicy } from './common/filesystem-policy.js';
 
 export interface EnvironmentContributionOptions {
   readonly agentHome: string;
@@ -17,22 +19,25 @@ export interface EnvironmentContributionOptions {
   readonly execEnabled: boolean;
   readonly processEnabled: boolean;
   readonly commandRunner?: CommandRunner;
+  readonly sandbox?: SandboxConfig;
+  readonly dependencyReads?: readonly string[];
 }
 
 export function createEnvironmentContribution(
   options: EnvironmentContributionOptions,
 ): RuntimeContributionUnit {
+  const policy = createFilesystemPolicy(options.sandbox, options.dependencyReads);
   return Object.freeze({
     id: 'builtin-environment',
     source: 'builtin' as const,
     register(api: ExtensionRegistrationApi) {
-      api.registerTool(createListDirTool(options.agentHome));
-      api.registerTool(createReadFileTool(options.agentHome));
-      api.registerTool(createFileSearchTool(options.agentHome));
-      api.registerTool(createGrepSearchTool(options.agentHome));
-      api.registerTool(createApplyPatchTool(options.agentHome));
-      api.registerTool(createWriteFileTool(options.agentHome));
-      api.registerTool(createEditFileTool(options.agentHome));
+      api.registerTool(createListDirTool(options.agentHome, policy));
+      api.registerTool(createReadFileTool(options.agentHome, policy));
+      api.registerTool(createFileSearchTool(options.agentHome, policy));
+      api.registerTool(createGrepSearchTool(options.agentHome, policy));
+      api.registerTool(createApplyPatchTool(options.agentHome, policy));
+      api.registerTool(createWriteFileTool(options.agentHome, policy));
+      api.registerTool(createEditFileTool(options.agentHome, policy));
       if (options.webFetchEnabled) api.registerTool(webFetchTool);
       if (options.execEnabled) api.registerTool(createExecTool(options.agentHome, options.commandRunner));
       if (options.processEnabled) api.registerTool(processTool);

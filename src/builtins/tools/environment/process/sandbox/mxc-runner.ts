@@ -1,14 +1,14 @@
-import { mkdir, mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
-import { fileURLToPath } from 'node:url';
 import type { ContainerRequest } from '@microsoft/mxc-sdk/v1';
 import { Logger } from '../../../../../platform/logger/index.js';
 import type { CommandRunner, OutputChunk, RunCommandOptions } from '../exec-types.js';
 import { BOOTSTRAP_FRAME_BYTES, BOOTSTRAP_REQUEST_BYTES, ROOT_VARIABLE, validateCommandEnvironment } from './bootstrap.js';
 import type { SandboxConfig } from './config.js';
+import { bootstrapPath, getSandboxDependencyReads } from './dependencies.js';
 
 interface SandboxProcess {
   readonly id: number;
@@ -37,9 +37,6 @@ interface SandboxSdk {
 }
 
 const log = Logger.get('ExecSandbox');
-const bootstrapPath = fileURLToPath(new URL(
-  import.meta.url.endsWith('.ts') ? './bootstrap.ts' : './bootstrap.js', import.meta.url,
-));
 
 function contains(root: string, path: string): boolean {
   const target = relative(root, path);
@@ -94,6 +91,7 @@ export async function createMxcCommandRunner(
   config: SandboxConfig,
   agentHome: string,
   loadSdk: () => Promise<SandboxSdk> = async () => import('@microsoft/mxc-sdk/v1'),
+  dependencyReads?: readonly string[],
 ): Promise<CommandRunner> {
   if (process.platform !== 'win32' && process.platform !== 'linux') {
     throw new Error('Exec sandbox requires supported Windows BaseContainer or Linux bubblewrap');
@@ -141,36 +139,7 @@ export async function createMxcCommandRunner(
       }
     }
   }
-  const reads = [bootstrapPath, dirname(process.execPath)];
-  if (process.platform === 'win32') {
-    const systemRoot = process.env.SystemRoot;
-    if (!systemRoot || !isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable');
-    reads.push(join(systemRoot, 'System32'));
-  } else {
-    // Linux npm's entry is a bin symlink to its runtime library, unlike the Windows layout.
-    const npmLibrary = resolve(dirname(process.execPath), '../lib/node_modules/npm');
-    try {
-      if ((await stat(npmLibrary)).isDirectory()) reads.push(npmLibrary);
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    }
-  }
-  // Node determines the entry's module type from its nearest package manifest.
-  let directory = dirname(bootstrapPath);
-  while (true) {
-    const manifest = join(directory, 'package.json');
-    try {
-      if ((await stat(manifest)).isFile()) {
-        reads.push(manifest);
-        break;
-      }
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-    }
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
+  const reads = [...dependencyReads ?? await getSandboxDependencyReads()];
   requirePaths(config, reads);
   const temporaryBase = await realpath(tmpdir());
   if (contains(await realpath(agentHome), temporaryBase)) throw new Error('Sandbox temporary base must be outside Agent Home');

@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 
 function countOccurrences(haystack: string, needle: string): number {
   if (!needle) {
@@ -24,7 +25,7 @@ function formatEditResult(path: string, replacements: number): string {
   return [`path: ${path}`, `replacements: ${replacements}`].join('\n');
 }
 
-export function createEditFileTool(agentHome: string): Tool {
+export function createEditFileTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'edit_file',
     description:
@@ -65,6 +66,7 @@ export function createEditFileTool(agentHome: string): Tool {
         }
 
         const target = resolveEnvironmentPath(params.path, agentHome);
+        await policy?.assert(target.resolvedPath, 'write');
         const original = await readFile(target.resolvedPath, 'utf8');
         const occurrences = countOccurrences(original, params.oldText);
 
@@ -83,6 +85,7 @@ export function createEditFileTool(agentHome: string): Tool {
         }
 
         const updated = original.replace(params.oldText, params.newText);
+        await policy?.assert(target.resolvedPath, 'write');
         await writeFile(target.resolvedPath, updated, 'utf8');
 
         return {

@@ -36,9 +36,20 @@ Filesystem and Search factories receive `agentHome`. Relative structured paths r
 
 `resolveEnvironmentPath()` returns the resolved Agent Home, absolute target, and display path. Display paths use forward slashes: paths inside Agent Home are relative (`.` for the root), while external targets are absolute. The helper resolves paths but does not authorize them or reject external targets.
 
-After Hook transformation and schema validation, Application Tool Policy examines each declared structured target before Tool execution. Tool-name deny is final. In `manual` Session mode, any lexically external target requires current-call Approval even when the Tool name is allowed; missing Approval capability fails closed. Internal targets follow ordinary allow/per-call Approval policy. In `allow_all`, every non-denied target is automatically authorized. Apply Patch classification includes add, delete, update, and move targets.
+After Hook transformation and schema validation, Application Tool Policy applies final Tool-name deny, mandatory manual Exec approval, then normal allow/current-call Approval rules. Home-relative and external targets have the same approval rules. In `allow_all`, every non-denied Tool is automatically authorized; resource checks still run at execution.
 
-Current-call Approval is call-scoped and origin-bound; `allow_all` is broader but remains process-local to the live root Session. Neither creates a persistent resource grant. Classification is lexical and does not canonicalize symlinks. Agent Home is therefore a relative-path anchor, not a sandbox or hard filesystem boundary. Filesystem Tools catch input/path/I/O failures at their execution boundary and report `outcome: 'failed'`.
+Current-call Approval is call-scoped and origin-bound; `allow_all` is broader but remains process-local to the live root Session. Neither creates a persistent resource grant. Agent Home remains a path anchor, not a permission tier. With Sandbox disabled, allowed file operations use host permissions even outside Home; the old extra external-target approval is removed.
+
+With Sandbox enabled, seven file/search tools use one Builtins-owned software policy:
+explicit System32/Node/Bootstrap/manifest/Linux npm reads plus user read/write/deny.
+No copied OS access, per-Exec TEMP or implicit Home/cwd grant. Rules are canonicalized
+per operation; equal paths use deny > read > write and deeper rules override parents.
+Directories cover descendants, including new files. Checks distinguish link targets
+from removed link entries and validate needed parent creation. Listings/searches skip
+denied subtrees; allowed descendants remain directly addressable. Realpath/check
+failures, including dangling listed links, fail explicitly rather than silently
+filtering errors. This is software validation, not race-free or OS containment.
+Input/path/policy/I/O failures report `outcome: 'failed'`.
 
 ## 3. Filesystem Tools
 
@@ -52,7 +63,7 @@ Current-call Approval is call-scoped and origin-bound; `allow_all` is broader bu
 
 `read_file` normalizes CRLF for line selection, rejects non-positive/non-integral ranges and `startLine > endLine`, and fails when the start exceeds file length. Empty files have an explicit successful result.
 
-`apply_patch` supports add, delete, update, and move-to hunks. Update matching proceeds in order, supports optional change-context and end-of-file markers, and tries exact, trailing-whitespace-normalized, then trimmed line matching. Updated files and non-empty added files end with a newline. Hunks are processed sequentially; the implementation does not claim a cross-file transaction or rollback.
+`apply_patch` supports add, delete, update, and move-to hunks. Update matching proceeds in order, supports optional change-context and end-of-file markers, and tries exact, trailing-whitespace-normalized, then trimmed line matching. Updated files and non-empty added files end with a newline. With Sandbox enabled, every hunk's resource operations are preflighted before mutation; actual operations recheck paths. Moves copy content then remove the source, not pure rename. Hunks are still processed sequentially; later I/O/content failures can leave partial changes, without cross-file transaction or rollback.
 
 ## 4. Search Tools
 
@@ -132,7 +143,9 @@ helpers for outbound mode; missing capability fails instead of using host
 networking. Outbound can reach private-network destinations on Linux.
 The original directory remains in use; no copy/rollback or resource-quota service
 is provided. Host file/web tools and arbitrary Extensions remain outside this
-boundary. [Sandbox Execution](../specifications/sandbox-execution.md) owns details.
+OS boundary. File/search tools additionally enforce the shared explicit reads
+and user rules in software, as described above.
+[Sandbox Execution](../specifications/sandbox-execution.md) owns details.
 
 ## 7. Process management
 

@@ -4,6 +4,7 @@
 > Contract status: Implemented and Validated
 > Verified: 2026-10-01
 > Authority: Stable Tool and Hook contract
+> Filesystem approval amendment: Implemented with recorded automated checks and owner-reported Windows manual verification on 2026-11-25
 
 ## Scope
 
@@ -50,7 +51,7 @@ A real terminal Tool result wins an Abort race. `signal.aborted` alone does not 
 
 ## Policy and visibility
 
-Explicit deny removes matching Provider-visible definitions and rejects stale/hallucinated calls at execution. Deny is final in both `manual` and `allow_all`. In `allow_all`, every other registered Tool is automatically authorized. In `manual`, Exec and lexically external structured filesystem targets require current-call approval even when statically allowed; internal allowed Tools bypass approval, while unmatched Tools request approval. Any required approval fails closed when the capability is absent. Session permission does not grant Hook authority, provide filesystem or network confinement, or verify executable integrity.
+Explicit deny removes matching Provider-visible definitions and rejects stale/hallucinated calls at execution. Deny is final in both `manual` and `allow_all`. In `allow_all`, every other registered Tool is automatically authorized. In `manual`, Exec requires current-call approval even when statically allowed; other allowed Tools bypass approval regardless of Home-relative/external targets, while unmatched Tools request approval. Any required approval fails closed when the capability is absent. Independent execution-time resource checks are not bypassed by approval. Session permission does not grant Hook authority, provide filesystem or network confinement, or verify executable integrity.
 
 ## Observer settlement
 

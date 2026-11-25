@@ -63,6 +63,7 @@ import { discoverSkills } from '../../core/skills/index.js';
 import {
   createEnvironmentContribution,
   createMxcCommandRunner,
+  getSandboxDependencyReads,
   resolveSandboxConfig,
   processRegistry,
 } from '../../builtins/tools/environment/index.js';
@@ -764,7 +765,7 @@ async function assembleLoadedRuntimeUnits(params: {
       return createApplicationToolPolicy({
         allow: [...profile.tools?.allow ?? []],
         deny: [...profile.tools?.deny ?? [], ...canSpawn ? [] : ['task']],
-      }, options.agentHome);
+      });
     },
   });
   const delegationPort = createSubagentDelegationPort({
@@ -830,8 +831,9 @@ function createRuntimeDependencies(
     },
     managedProcessLifecycle: processRegistry,
     async getBuiltinContributionUnits(options, memoryManager) {
+      const dependencyReads = options.sandbox?.enabled ? await getSandboxDependencyReads() : undefined;
       const commandRunner = options.sandbox?.enabled
-        ? await createMxcCommandRunner(options.sandbox, options.agentHome)
+        ? await createMxcCommandRunner(options.sandbox, options.agentHome, undefined, dependencyReads)
         : undefined;
       return Object.freeze([
         createEnvironmentContribution({
@@ -840,6 +842,8 @@ function createRuntimeDependencies(
           execEnabled: options.execEnabled ?? true,
           processEnabled: options.processEnabled ?? true,
           commandRunner,
+          sandbox: options.sandbox,
+          dependencyReads,
         }),
         ...(memoryManager ? [createMemoryToolsContribution(memoryManager)] : []),
       ]);

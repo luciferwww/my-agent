@@ -1,5 +1,6 @@
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 import { buildPathMatcher, listDirectoryFiles } from '../common/directory-walk.js';
 
 function parseMaxResults(value: unknown): number | undefined {
@@ -22,7 +23,7 @@ function formatResults(query: string, matches: string[]): string {
   return [`query: ${query}`, 'matches:', ...matches].join('\n');
 }
 
-export function createFileSearchTool(agentHome: string): Tool {
+export function createFileSearchTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'file_search',
     description: 'Search for files below a selected directory by filename or glob-like path pattern.',
@@ -54,9 +55,10 @@ export function createFileSearchTool(agentHome: string): Tool {
         }
 
         const root = resolveEnvironmentPath(params.path ?? '.', agentHome);
+        await policy?.assert(root.resolvedPath, 'read');
         const matcher = buildPathMatcher(params.query);
         const maxResults = parseMaxResults(params.maxResults);
-        const files = await listDirectoryFiles(root.resolvedPath);
+        const files = await listDirectoryFiles(root.resolvedPath, policy?.canRead);
         const matches = files
           .map((entry) => entry.relativePath)
           .filter((candidate) => matcher(candidate))

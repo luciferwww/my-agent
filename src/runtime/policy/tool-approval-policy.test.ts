@@ -14,7 +14,7 @@ function decide(
   input: Readonly<Record<string, unknown>> = {},
   permissionMode: SessionPermissionMode = 'manual',
 ) {
-  return createApplicationToolPolicy(config, agentHome)
+  return createApplicationToolPolicy(config)
     .decide(toolName, input, hasApprovalCapability, permissionMode);
 }
 
@@ -107,12 +107,13 @@ describe('CH-06 resolveToolPolicy — with approval channel', () => {
   });
 });
 
-describe('structured external-path approval', () => {
+describe('path-independent approval', () => {
   const externalPath = resolve(agentHome, '..', 'outside', 'file.txt');
 
-  it('allows an allowed structured Tool for an Agent Home-relative target', () => {
+  it.each([true, false])('allows internal and external file targets with approval capability=%s', hasApproval => {
     const config: ToolsConfig = { allow: ['read_file'], deny: [] };
-    expect(decide('read_file', config, true, { path: 'notes/file.txt' })).toBe('allow');
+    expect(decide('read_file', config, hasApproval, { path: 'notes/file.txt' })).toBe('allow');
+    expect(decide('read_file', config, hasApproval, { path: externalPath })).toBe('allow');
   });
 
   describe('Session Allow All', () => {
@@ -132,23 +133,12 @@ describe('structured external-path approval', () => {
     });
   });
 
-  it('requires approval for an external target even when the Tool is allowed', () => {
-    const config: ToolsConfig = { allow: ['read_file'], deny: [] };
-    expect(decide('read_file', config, true, { path: externalPath }))
-      .toBe('requires_approval');
-  });
-
-  it('fails closed for an external target when approval is unavailable', () => {
-    const config: ToolsConfig = { allow: ['read_file'], deny: [] };
-    expect(decide('read_file', config, false, { path: externalPath })).toBe('deny');
-  });
-
   it('keeps Tool-name deny final for external targets', () => {
     const config: ToolsConfig = { allow: ['read_file'], deny: ['read_file'] };
     expect(decide('read_file', config, true, { path: externalPath })).toBe('deny');
   });
 
-  it('classifies every apply_patch source and move target', () => {
+  it('does not impose extra approval on an allowed patch with an external move target', () => {
     const config: ToolsConfig = { allow: ['apply_patch'], deny: [] };
     const input = {
       input: [
@@ -161,7 +151,7 @@ describe('structured external-path approval', () => {
         '*** End Patch',
       ].join('\n'),
     };
-    expect(decide('apply_patch', config, true, input)).toBe('requires_approval');
+    expect(decide('apply_patch', config, false, input)).toBe('allow');
   });
 
   it('treats omitted Search path as the internal Agent Home default', () => {

@@ -136,7 +136,7 @@ from file-progress order. Connectivity hints may suggest a mirror; local or
 authorization failures must not be mislabeled as connectivity failures.
 Preserve original-error propagation and existing keyword-only fallback decisions.
 
-Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, lexically external structured targets and all Exec calls require current-call Approval even when the Tool name is allowed; internal allowed targets bypass Approval, while other unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized. Exact names and `*`/`?` globs are supported; `group:*` is not.
+Tool deny hides matching definitions and remains final at execution. Session permission mode is Runtime state, not configuration. In `manual`, all Exec calls require current-call Approval even when the Tool name is allowed; other allowed tools bypass Approval regardless of Home-relative/external targets, while unmatched Tools require Approval. Missing required Approval fails closed. In `allow_all`, every non-denied registered Tool is automatically authorized, without bypassing independent resource checks. Exact names and `*`/`?` globs are supported; `group:*` is not.
 
 Agent Home is the relative path anchor, not a confinement boundary. Approval is current-call only. Canonical/symlink-aware authorization, persistent grants and command patterns remain outside this contract; separately configured sandbox enforcement belongs to [Sandbox Execution](sandbox-execution.md), not Tool approval or configuration loading.
 

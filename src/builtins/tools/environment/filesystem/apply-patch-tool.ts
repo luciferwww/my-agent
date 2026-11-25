@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 import { applyUpdateHunk, type UpdateFileChunk } from './apply-patch-update.js';
 
 const BEGIN_PATCH_MARKER = '*** Begin Patch';
@@ -224,7 +225,7 @@ async function ensureParentDir(filePath: string): Promise<void> {
   await mkdir(parentDir, { recursive: true });
 }
 
-export function createApplyPatchTool(agentHome: string): Tool {
+export function createApplyPatchTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'apply_patch',
     description:
@@ -261,12 +262,36 @@ export function createApplyPatchTool(agentHome: string): Tool {
           };
         }
 
+        if (policy) {
+          const removedPaths = new Set<string>();
+          const pathKey = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
+          const preflightTarget = (path: string) => removedPaths.has(pathKey(path)) ? 'entry' as const : 'follow' as const;
+          for (const hunk of hunks) {
+            const path = resolveEnvironmentPath(hunk.path, agentHome).resolvedPath;
+            // After an earlier deletion, a later add replaces the entry, not its old link target.
+            if (hunk.kind === 'add') await policy.assertWrite(path, preflightTarget(path));
+            else if (hunk.kind === 'delete') {
+              await policy.assert(path, 'write', 'entry');
+              removedPaths.add(pathKey(path));
+            } else {
+              await policy.assert(path, hunk.movePath ? 'read' : 'write', preflightTarget(path));
+              if (hunk.movePath) {
+                const destination = resolveEnvironmentPath(hunk.movePath, agentHome).resolvedPath;
+                await policy.assertWrite(destination, preflightTarget(destination));
+                await policy.assert(path, 'write', 'entry');
+                removedPaths.add(pathKey(path));
+              }
+            }
+          }
+        }
         const summary: ApplyPatchSummary = { added: [], modified: [], deleted: [] };
 
         for (const hunk of hunks) {
           if (hunk.kind === 'add') {
             const target = resolveEnvironmentPath(hunk.path, agentHome);
+            await policy?.assertWrite(target.resolvedPath);
             await ensureParentDir(target.resolvedPath);
+            await policy?.assert(target.resolvedPath, 'write');
             await writeFile(target.resolvedPath, hunk.contents, 'utf8');
             recordSummary(summary, 'added', target.displayPath);
             continue;
@@ -274,25 +299,32 @@ export function createApplyPatchTool(agentHome: string): Tool {
 
           if (hunk.kind === 'delete') {
             const target = resolveEnvironmentPath(hunk.path, agentHome);
+            await policy?.assert(target.resolvedPath, 'write', 'entry');
             await rm(target.resolvedPath);
             recordSummary(summary, 'deleted', target.displayPath);
             continue;
           }
 
           const target = resolveEnvironmentPath(hunk.path, agentHome);
+          await policy?.assert(target.resolvedPath, hunk.movePath ? 'read' : 'write');
           const updatedContent = await applyUpdateHunk(target.resolvedPath, hunk.chunks, {
             readFile: (filePath) => readFile(filePath, 'utf8'),
           });
 
           if (hunk.movePath) {
             const moveTarget = resolveEnvironmentPath(hunk.movePath, agentHome);
+            await policy?.assertWrite(moveTarget.resolvedPath);
+            await policy?.assert(target.resolvedPath, 'write', 'entry');
             await ensureParentDir(moveTarget.resolvedPath);
+            await policy?.assert(moveTarget.resolvedPath, 'write');
             await writeFile(moveTarget.resolvedPath, updatedContent, 'utf8');
+            await policy?.assert(target.resolvedPath, 'write', 'entry');
             await rm(target.resolvedPath);
             recordSummary(summary, 'modified', moveTarget.displayPath);
             continue;
           }
 
+          await policy?.assert(target.resolvedPath, 'write');
           await writeFile(target.resolvedPath, updatedContent, 'utf8');
           recordSummary(summary, 'modified', target.displayPath);
         }

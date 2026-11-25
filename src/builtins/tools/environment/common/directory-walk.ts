@@ -12,20 +12,23 @@ export type DirectoryFileEntry = {
   relativePath: string;
 };
 
-export async function listDirectoryFiles(rootDir: string): Promise<DirectoryFileEntry[]> {
+export async function listDirectoryFiles(
+  rootDir: string,
+  canRead?: (path: string) => Promise<boolean>,
+): Promise<DirectoryFileEntry[]> {
   const files: DirectoryFileEntry[] = [];
 
   async function walk(currentDir: string): Promise<void> {
+    if (canRead && !await canRead(currentDir)) return;
     const entries = await readdir(currentDir, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
 
     for (const entry of entries) {
       const absolutePath = join(currentDir, entry.name);
+      if (!entry.isDirectory() && !entry.isFile()) continue;
+      if (entry.isDirectory() && IGNORED_DIRECTORIES.has(entry.name)) continue;
+      if (canRead && !await canRead(absolutePath)) continue;
       if (entry.isDirectory()) {
-        if (IGNORED_DIRECTORIES.has(entry.name)) {
-          continue;
-        }
-
         await walk(absolutePath);
         continue;
       }

@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 
 function formatWriteResult(params: { path: string; created: boolean; bytesWritten: number }): string {
   return [
@@ -12,7 +13,7 @@ function formatWriteResult(params: { path: string; created: boolean; bytesWritte
   ].join('\n');
 }
 
-export function createWriteFileTool(agentHome: string): Tool {
+export function createWriteFileTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'write_file',
     description:
@@ -43,6 +44,7 @@ export function createWriteFileTool(agentHome: string): Tool {
         }
 
         const target = resolveEnvironmentPath(params.path, agentHome);
+        await policy?.assertWrite(target.resolvedPath);
         let created = false;
 
         try {
@@ -52,6 +54,7 @@ export function createWriteFileTool(agentHome: string): Tool {
         }
 
         await mkdir(dirname(target.resolvedPath), { recursive: true });
+        await policy?.assert(target.resolvedPath, 'write');
         await writeFile(target.resolvedPath, params.content, 'utf8');
 
         return {

@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 
 import type { Tool } from '../../../../core/tools/types.js';
 import { resolveEnvironmentPath } from '../common/path-policy.js';
+import type { FilesystemPolicy } from '../common/filesystem-policy.js';
 
 const DEFAULT_MAX_LINES = 200;
 
@@ -43,7 +44,7 @@ function formatReadResult(params: {
   return `${header.join('\n')}\n\n${params.selectedLines.join('\n')}`.trimEnd();
 }
 
-export function createReadFileTool(agentHome: string): Tool {
+export function createReadFileTool(agentHome: string, policy?: FilesystemPolicy): Tool {
   return {
     name: 'read_file',
     description: 'Read file contents, optionally limited to a 1-based line range.',
@@ -68,6 +69,7 @@ export function createReadFileTool(agentHome: string): Tool {
     execute: async (params) => {
       try {
         const target = resolveEnvironmentPath(params.path, agentHome);
+        await policy?.assert(target.resolvedPath, 'read');
         const startLine = normalizePositiveInteger(params.startLine, 'startLine');
         const endLine = normalizePositiveInteger(params.endLine, 'endLine');
 
