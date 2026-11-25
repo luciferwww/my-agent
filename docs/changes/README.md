@@ -13,7 +13,7 @@ retaining a Change record.
 
 ## Active
 
-No active Changes.
+- [Smart Approval 模型评估](active/smart-approval-evaluation/plan.md)，及其 [Draft Spike Specification](active/smart-approval-evaluation/spike-specification.md) - Proposed/Draft，待 owner 审批。收缩为 Node.js-only 单候选的简单接入和二态/三态离线比较；不引入 Python、模型转换或自制推理栈，复杂则停止。不预定产品放行档位，不授权下载、安装、实验或实际审批变更。
 
 ## Archived
 

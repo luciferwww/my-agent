@@ -6,6 +6,7 @@ This directory is reserved for external comparisons and exploratory analysis. Re
 
 ## Current research
 
+- [Smart Approval 设计草稿](smart-approval-design-draft.md) - 非权威讨论：明确 Smart 不等于 allow_all；拟采用 manual/smart/allow_all，Smart 与 allow_all 要求 Sandbox 开启；区分 Tool permission 放行和资源许可。下一步由 [Proposed 模型评估 Change](../changes/active/smart-approval-evaluation/plan.md)先验证二态/三态、后果识别与本地可行性，再决定产品标准；不授权实现、模型运行或 Change 接受。
 - [Sandbox 基础文件权限设计草稿](sandbox-filesystem-baseline-design-draft.md) - 非权威讨论：区分显式依赖读取、后端 / OS 系统基线、私有临时写入与用户 read/write/deny；记录移除 System32 显式授权的本机有限对照，讨论可信程序资源及发布形态；补充取消 Home 内外特殊审批的方向和宿主文件访问边界；已确认暂保留 System32 显式授权、资源冲突交由原生规则及先接入文件工具路径校验再移除特殊审批；不授权实现、实验或权限扩大，PATH 发现和默认工作目录暂缓。
 - [Default Agent Prompt 与动态 Tool Use Instructions 调研](default-agent-prompt-and-dynamic-tool-instructions-research-2026-11-23.md) - 非权威调研：核对 VS Code Copilot Chat 的 patch/edit 指导、Prompt 组件、模型选择及 section 组装顺序；结合本项目 Builder、模式、Root/Child 与持久化边界，讨论动态工具指导、可信来源、Review、测试与渐进演进；不授权实现或 Spike。
 - [本地个人 Agent 的工具后果风险评估、Smart Approval 与跨平台 Sandbox 调研](smart-approval-and-cross-platform-sandbox-research-2026-11-23.md) - 非权威调研：以可能有害的操作后果而非恶意意图为核心，分离效果证据、损害维度、授权与审批；讨论可信 State、轻量模型领域适配及训练评测、Windows 优先的三平台隔离能力与失败边界；不授权实现。
